@@ -38,3 +38,26 @@ if __name__ == "__main__":
         bolsas = distribuir_bolsas(pedido)
         print(f"{pedido} kg: {len(bolsas)} etiquetas -> "
               + ", ".join(f"{peso / 1000:.3f} kg" for peso in bolsas))
+
+
+# Excepciones específicas por municipio y producto (gramos por bolsa).
+REGLAS_ESPECIALES = {
+    ("SIBATE", "CARNE MOLIDA"): {"capacidad_gramos": 1000, "tolerancia_gramos": 0},
+}
+
+
+def distribuir_por_destino(kilos, municipio, producto):
+    """Aplica regla particular de empaque o la regla general de 4 kg.
+
+    Dos libras comerciales colombianas = 1 kg. Para la carne molida de
+    Sibaté no se permite añadir sobrantes a bolsas de 1 kg.
+    """
+    import unicodedata
+
+    def normalizar(valor):
+        texto = unicodedata.normalize("NFKD", str(valor).strip().upper())
+        return " ".join("".join(c for c in texto if not unicodedata.combining(c)).split())
+
+    clave = (normalizar(municipio), normalizar(producto))
+    regla = REGLAS_ESPECIALES.get(clave, {"capacidad_gramos": 4000, "tolerancia_gramos": 999})
+    return distribuir_bolsas(kilos, **regla)

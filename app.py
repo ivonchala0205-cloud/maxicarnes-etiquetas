@@ -1,4 +1,5 @@
 import streamlit as st
+from datetime import date, timedelta
 from empaque import distribuir_por_destino
 
 st.set_page_config(page_title="Maxi Carnes | Etiquetas", page_icon="🏷️")
@@ -33,4 +34,21 @@ if calcular:
         except ValueError as exc:
             st.error(str(exc))
 
-st.caption("Próximas etapas: importar Excel, completar datos de lote y generar etiquetas Zebra.")
+st.divider()
+st.subheader("Datos para futuras etiquetas")
+st.caption("Esta sección es una vista previa: aún no crea ni imprime etiquetas.")
+fecha_beneficio = st.date_input("Fecha de beneficio (registrada por Cristian)", value=date.today(), format="DD/MM/YYYY")
+lote = st.text_input("Número de lote")
+if st.button("Ver fechas previstas de etiquetas"):
+    if not lote.strip():
+        st.warning("Ingresa el número de lote.")
+    else:
+        fecha_empaque = date.today()
+        fecha_vencimiento = fecha_empaque + timedelta(days=30)
+        st.write(f"**Lote:** {lote}")
+        st.write(f"**Beneficio:** {fecha_beneficio:%d/%m/%Y}")
+        st.write(f"**Empaque:** {fecha_empaque:%d/%m/%Y}")
+        st.write(f"**Vencimiento (30 días calendario):** {fecha_vencimiento:%d/%m/%Y}")
+        st.warning("La vida útil de 30 días requiere validación sanitaria antes de imprimir etiquetas comerciales.")
+
+st.caption("Próximas etapas: importar Excel, configurar textos fijos y generar etiquetas Zebra.")

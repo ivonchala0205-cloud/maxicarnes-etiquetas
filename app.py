@@ -37,11 +37,11 @@ if calcular:
 st.divider()
 st.subheader("Datos para futuras etiquetas")
 st.caption("Esta sección es una vista previa: aún no crea ni imprime etiquetas.")
-fecha_beneficio = st.date_input("Fecha de beneficio (registrada por Cristian)", value=date.today(), format="DD/MM/YYYY")
-lote = st.text_input("Número de lote")
+fecha_beneficio = st.date_input("Fecha de beneficio (la selecciona Cristian)", value=None, format="DD/MM/YYYY")
+lote = st.text_input("Número de lote (lo escribe Cristian)")
 if st.button("Ver fechas previstas de etiquetas"):
-    if not lote.strip():
-        st.warning("Ingresa el número de lote.")
+    if fecha_beneficio is None or not lote.strip():
+        st.warning("Cristian debe ingresar la fecha de beneficio y el número de lote.")
     else:
         fecha_empaque = date.today()
         fecha_vencimiento = fecha_empaque + timedelta(days=30)

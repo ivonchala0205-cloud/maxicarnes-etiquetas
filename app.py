@@ -161,6 +161,74 @@ tab_pedidos, tab_catalogo, tab_revision, tab_bandeja = st.tabs(
     ["1. Formulario por municipio", "2. Municipios, clientes y productos", "3. Revisión semanal", "4. Pedidos recibidos"]
 )
 
+with st.expander("Importar pedidos desde Excel (.xlsx)", expanded=False):
+    st.write("Carga un municipio o varios municipios en el mismo archivo. Revisa los datos antes de guardarlos.")
+    plantilla = BytesIO()
+    import pandas as pd
+    with pd.ExcelWriter(plantilla, engine="openpyxl") as writer:
+        pd.DataFrame([{"Municipio":"GAMA","Cliente":"TECNICO AGROPECUARIO MARTIN ROMERO",
+                       "Producto":"CARNE DE RES - GOULASH","Kilos":5.1}]).to_excel(writer,index=False)
+    st.download_button("Descargar plantilla Excel",plantilla.getvalue(),"plantilla_pedidos_maxicarnes.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    archivo = st.file_uploader("Selecciona el Excel de pedidos",type=["xlsx"],key="excel_pedidos")
+    if archivo is not None:
+        try:
+            tabla_excel = pd.read_excel(archivo, dtype=str).fillna("")
+            tabla_excel.columns = [str(x).strip().casefold() for x in tabla_excel.columns]
+            requeridas = ["municipio","cliente","producto","kilos"]
+            if any(c not in tabla_excel for c in requeridas):
+                st.error("El Excel debe incluir las columnas: Municipio, Cliente, Producto y Kilos.")
+            else:
+                mids, cids, pids = ids_catalogo()
+                nombres_m = {k.casefold().strip():k for k in mids}
+                nombres_c = {(mid,n.casefold().strip()):n for mid,n in cids}
+                nombres_p = {k.casefold().strip():k for k in pids}
+                grupos, errores_excel = {}, []
+                for fila_num, fila in tabla_excel.iterrows():
+                    if not any(str(fila[c]).strip() for c in requeridas):
+                        continue
+                    municipio_excel = nombres_m.get(str(fila["municipio"]).casefold().strip())
+                    producto_excel = nombres_p.get(str(fila["producto"]).casefold().strip())
+                    cliente_excel = nombres_c.get((mids.get(municipio_excel),str(fila["cliente"]).casefold().strip())) if municipio_excel else None
+                    try:
+                        if not municipio_excel or not cliente_excel or not producto_excel:
+                            raise ValueError("Municipio, cliente o producto no coincide con el catálogo")
+                        gramos = convertir_a_gramos(str(fila["kilos"]).strip().replace(",",".")) 
+                        if gramos <= 0:
+                            raise ValueError("La cantidad debe ser mayor que cero")
+                        kilos = str(Decimal(gramos)/1000)
+                        bolsas = distribuir_por_destino(kilos,municipio_excel,producto_excel)
+                        grupos.setdefault(municipio_excel,[]).append({
+                            "Municipio":municipio_excel,"Cliente":cliente_excel,
+                            "Producto":producto_excel,"Kilos":kilos,"Empaque":"Predeterminada",
+                            "Bolsas":bolsas,"Capacidad especial":None})
+                    except (ValueError,InvalidOperation,KeyError) as exc:
+                        errores_excel.append(f"Fila {fila_num+2}: {exc}")
+                if errores_excel:
+                    st.error("Corrige estas filas antes de importar:")
+                    for e in errores_excel[:30]:
+                        st.write(e)
+                elif not grupos:
+                    st.warning("No hay pedidos válidos en el archivo.")
+                else:
+                    st.success(f"Archivo validado: {len(grupos)} municipios, {sum(map(len,grupos.values()))} productos/sucursales y {sum(len(p['Bolsas']) for v in grupos.values() for p in v)} etiquetas.")
+                    st.dataframe([{"Municipio":m,"Cliente":p["Cliente"],"Producto":p["Producto"],"Kilos":p["Kilos"],"Bolsas":len(p["Bolsas"])} for m,items in grupos.items() for p in items],hide_index=True,use_container_width=True)
+                    st.warning("Al confirmar, se creará un pedido nuevo por municipio. Comprueba que no se hayan importado antes.")
+                    if st.checkbox("Revisé el archivo y autorizo crear estos pedidos",key="confirmar_excel"):
+                        if st.button("Guardar pedidos del Excel en Supabase",type="primary"):
+                            resultados = []
+                            for m,items in grupos.items():
+                                try:
+                                    pedido = guardar_pedido_real(m,items,mids,cids,pids)
+                                    resultados.append((m,pedido.get("numero_pedido") or pedido["id"]))
+                                except Exception as exc:
+                                    st.error(f"No se pudo guardar {m}: {exc}. Los municipios anteriores sí pueden haberse guardado; verifica antes de reintentar.")
+                                    break
+                            for m,n in resultados:
+                                st.success(f"{m}: pedido {n} guardado")
+        except Exception as exc:
+            st.error(f"No se pudo leer el Excel: {exc}")
+
 with tab_catalogo:
     st.subheader("Catálogo de prueba")
     st.warning("Los municipios, clientes y productos se consultan desde Supabase. Las altas realizadas aquí son temporales y NO se guardan en Supabase.")

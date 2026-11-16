@@ -36,11 +36,15 @@ def pdf_etiquetas_diseno(lineas, numero_pedido="PRUEBA", lote="",
     c = canvas.Canvas(salida, pagesize=(W,H), pageCompression=1)
     logo = ImageReader(BytesIO(base64.b64decode(LOGO_B64)))
     for linea in lineas:
+        total_bolsas = int(linea.get("Total bolsas original") or len(linea["Bolsas"]))
         for indice, gramos in enumerate(linea["Bolsas"], 1):
+            numero_bolsa = int(linea.get("Número bolsa original") or indice)
             caja(c, M, M, W-2*M, H-2*M, 1.5)
             c.drawImage(logo, 28*mm, 79*mm, width=44*mm, height=20*mm, preserveAspectRatio=True, mask='auto')
             c.line(6*mm, 85*mm, 25*mm, 85*mm)
             c.line(75*mm, 85*mm, 94*mm, 85*mm)
+            c.setFont("Helvetica-Bold", 8)
+            c.drawRightString(94*mm, 80*mm, f"BOLSA {numero_bolsa} DE {total_bolsas}")
             # Título del producto
             caja(c, 5*mm, 66*mm, 90*mm, 12*mm, 1)
             producto = str(linea["Producto"]).upper()

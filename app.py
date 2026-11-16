@@ -1,16 +1,17 @@
-"""Prototipo de flujo semanal Maxi Carnes. Sin base de datos ni impresión."""
+"""Pedidos Maxi Carnes: catálogo real y guardado administrativo en Supabase."""
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 import json
+import hmac
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 import streamlit as st
-from empaque import distribuir_por_destino, distribuir_bolsas
+from empaque import distribuir_por_destino, distribuir_bolsas, convertir_a_gramos
 
 st.set_page_config(page_title="Maxi Carnes | Pedidos", page_icon="🏷️", layout="wide")
 st.title("Maxi Carnes | Pedidos y etiquetas")
-st.caption("Catálogos consultados desde Supabase. Los pedidos todavía son de prueba y no se guardan en la base de datos.")
+st.caption("Catálogos desde Supabase. Guardado permanente disponible solo en modo administrador autorizado.")
 
 # Catálogos reales: lectura desde Supabase, únicamente desde el servidor Streamlit.
 @st.cache_data(ttl=120, show_spinner="Consultando catálogos de Maxi Carnes...")
@@ -37,6 +38,92 @@ def cargar_catalogos():
     productos_activos = [p["nombre"] for p in productos if p.get("activo", True)]
     return agrupados, productos_activos, len(clientes)
 
+def api_supabase(tabla, metodo="GET", datos=None, parametros=None):
+    """Acceso solo desde servidor; nunca enviar la clave al navegador."""
+    url = st.secrets["SUPABASE_URL"].rstrip("/")
+    key = st.secrets["SUPABASE_KEY"]
+    destino = f"{url}/rest/v1/{tabla}"
+    if parametros:
+        destino += "?" + urlencode(parametros)
+    headers = {"apikey": key, "Accept": "application/json"}
+    cuerpo = None
+    if datos is not None:
+        cuerpo = json.dumps(datos).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+        headers["Prefer"] = "return=representation"
+    req = Request(destino, data=cuerpo, headers=headers, method=metodo)
+    with urlopen(req, timeout=25) as resp:
+        texto = resp.read().decode("utf-8")
+        return json.loads(texto) if texto else []
+
+
+def guardar_pedido_real(municipio, lineas, municipios_db, clientes_db, productos_db):
+    """Guarda cabecera y detalles. Limpia la cabecera si fallan los detalles."""
+    semanas = api_supabase("semanas", parametros={
+        "select": "id", "abierta": "eq.true", "order": "fecha_inicio.desc", "limit": "1"
+    })
+    if not semanas:
+        raise ValueError("No existe una semana abierta en Supabase.")
+    municipio_id = municipios_db[municipio]
+    semana_id = semanas[0]["id"]
+    previos = api_supabase("pedidos", parametros={
+        "select": "id,numero_pedido", "semana_id": f"eq.{semana_id}",
+        "municipio_id": f"eq.{municipio_id}", "limit": "1"
+    })
+    if previos:
+        raise ValueError(
+            "Este municipio ya tiene un pedido en la semana abierta: "
+            + str(previos[0].get("numero_pedido") or previos[0]["id"])
+            + ". No se creará un duplicado."
+        )
+    detalles = []
+    for linea in lineas:
+        cliente_id = clientes_db.get((municipio_id, linea["Cliente"]))
+        producto_id = productos_db.get(linea["Producto"])
+        if cliente_id is None or producto_id is None:
+            raise ValueError("Cliente o producto no encontrado en el catálogo real.")
+        detalles.append({
+            "cliente_id": cliente_id,
+            "producto_id": producto_id,
+            "gramos": convertir_a_gramos(linea["Kilos"]),
+            "capacidad_especial_gramos": (
+                linea["Capacidad especial"] if linea["Empaque"] != "Predeterminada" else None
+            ),
+            "aprobado_especial": False
+        })
+    creados = api_supabase("pedidos", "POST", {
+        "semana_id": semana_id, "municipio_id": municipio_id, "estado": "enviado"
+    })
+    if not creados:
+        raise ValueError("Supabase no devolvió el pedido creado.")
+    pedido = creados[0]
+    try:
+        api_supabase("detalles_pedido", "POST", [
+            dict(detalle, pedido_id=pedido["id"]) for detalle in detalles
+        ])
+    except Exception:
+        try:
+            api_supabase("pedidos", "DELETE", parametros={"id": f'eq.{pedido["id"]}'})
+        except Exception:
+            raise RuntimeError(
+                "Falló el guardado de detalles y no se pudo confirmar la limpieza. "
+                "Revisar el pedido en Supabase antes de reintentar."
+            )
+        raise
+    return pedido
+
+
+@st.cache_data(ttl=120)
+def ids_catalogo():
+    municipios = api_supabase("municipios", parametros={"select": "id,nombre,activo", "limit": "1000"})
+    clientes = api_supabase("clientes", parametros={"select": "id,municipio_id,nombre,activo", "limit": "1000"})
+    productos = api_supabase("productos", parametros={"select": "id,nombre,activo", "limit": "1000"})
+    mids = {m["nombre"]: m["id"] for m in municipios if m.get("activo", True)}
+    cids = {(c["municipio_id"], c["nombre"]): c["id"] for c in clientes if c.get("activo", True)}
+    pids = {p["nombre"]: p["id"] for p in productos if p.get("activo", True)}
+    return mids, cids, pids
+
+
 try:
     catalogo_db, productos_db, total_clientes_db = cargar_catalogos()
 except (KeyError, HTTPError, URLError, TimeoutError, ValueError) as exc:
@@ -60,6 +147,18 @@ if "pedidos" not in st.session_state:
     st.session_state.pedidos = []
 if "fila_id" not in st.session_state:
     st.session_state.fila_id = 0
+
+with st.sidebar:
+    st.subheader("Acceso administrativo")
+    clave_admin = st.text_input("Contraseña de Cristian / administrador", type="password")
+    configurada = st.secrets.get("ADMIN_PASSWORD", "")
+    autorizado = bool(configurada and clave_admin and hmac.compare_digest(clave_admin, configurada))
+    if not configurada:
+        st.warning("Para habilitar guardado real, configura ADMIN_PASSWORD en Streamlit Secrets.")
+    elif autorizado:
+        st.success("Modo administrador autorizado")
+    else:
+        st.info("Sin acceso administrativo: solo simulación, no se guardan pedidos.")
 
 tab_pedidos, tab_catalogo, tab_revision = st.tabs(
     ["1. Formulario por municipio", "2. Municipios, clientes y productos", "3. Revisión semanal"]
@@ -139,7 +238,7 @@ with tab_pedidos:
                             key=f"max_{municipio}_{cliente}_{j}")
                     filas.append((cliente, producto, kilos, regla, maximo))
                 st.divider()
-            enviar = st.form_submit_button("Guardar pedido de este municipio (prueba)", type="primary")
+            enviar = st.form_submit_button("Guardar pedido", type="primary")
         if enviar:
             nuevos, errores = [], []
             for cliente, producto, kilos, regla, maximo in filas:
@@ -166,6 +265,7 @@ with tab_pedidos:
                     nuevos.append({
                         "Municipio": municipio, "Cliente": cliente, "Producto": producto,
                         "Kilos": str(valor), "Empaque": regla, "Bolsas": bolsas,
+                        "Capacidad especial": int(gramos) if regla != "Predeterminada" else None,
                     })
                 except (InvalidOperation, ValueError) as exc:
                     errores.append(f"{cliente} / {producto}: {exc}")
@@ -173,14 +273,26 @@ with tab_pedidos:
                 for error in errores:
                     st.error(error)
                 st.warning("No se guardó este municipio; corrige los datos y vuelve a intentarlo.")
-            else:
+            elif not nuevos:
+                st.warning("No hay cantidades positivas. No se creó ningún pedido.")
+            elif not autorizado:
                 st.session_state.pedidos = [p for p in st.session_state.pedidos if p["Municipio"] != municipio] + nuevos
-                st.success(f"Pedido de {municipio} registrado en esta sesión: {len(nuevos)} productos con cantidad positiva.")
-                if not nuevos:
-                    st.info("Municipio sin cantidades solicitadas: 0 etiquetas.")
+                st.info("Simulación local: pedido NO guardado en Supabase. Ingresa la contraseña administrativa para guardar.")
+            elif not total_clientes_db:
+                st.error("No se permite guardar con el catálogo de ejemplo. Verifica Supabase.")
+            else:
+                try:
+                    mids, cids, pids = ids_catalogo()
+                    pedido_guardado = guardar_pedido_real(municipio, nuevos, mids, cids, pids)
+                    st.session_state.pedidos = [p for p in st.session_state.pedidos if p["Municipio"] != municipio] + nuevos
+                    st.success("Pedido guardado en Supabase: " + str(pedido_guardado.get("numero_pedido") or pedido_guardado["id"]))
+                    st.info("No vuelvas a enviarlo: la semana admite un pedido por municipio. Impresión aún no disponible.")
+                except (HTTPError, URLError, KeyError, ValueError, RuntimeError, TimeoutError) as exc:
+                    st.error("No se pudo confirmar el guardado. Revisa Supabase antes de reintentar.")
+                    st.caption(f"Error: {type(exc).__name__}" + (f" (HTTP {exc.code})" if isinstance(exc, HTTPError) else f": {exc}"))
 
 with tab_revision:
-    st.subheader("Consolidado semanal — simulación")
+    st.subheader("Consolidado de esta sesión")
     st.caption("Los catálogos se leen de Supabase; los pedidos de prueba no se guardan ni se imprimen ni se reciben desde enlaces externos.")
     with st.expander("Datos que Cristian diligenciará antes de generar etiquetas", expanded=True):
         fecha_beneficio = st.date_input("Fecha de beneficio (manual)", value=None, format="DD/MM/YYYY")
@@ -201,4 +313,4 @@ with tab_revision:
         } for p in pedidos], use_container_width=True, hide_index=True)
     else:
         st.info("Todavía no hay pedidos registrados en esta sesión.")
-    st.warning("Próximo desarrollo: base de datos, enlaces seguros por municipio, confirmación semanal e impresión Zebra en lote.")
+    st.warning("Pendiente: consulta de pedidos históricos, acceso seguro por municipio e impresión Zebra en lote.")

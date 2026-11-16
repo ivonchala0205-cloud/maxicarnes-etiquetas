@@ -676,13 +676,45 @@ with tab_bandeja:
         filtro = st.selectbox("Mostrar pedidos", ["Todos","Pendientes / sin confirmar","Impresos"])
         visibles = registros if filtro == "Todos" else (impresos if filtro == "Impresos" else pendientes)
         st.markdown("#### PDF conjunto de pedidos")
-        st.caption("Genera un único PDF de etiquetas 10 × 10 cm para varios municipios. Solo incluye pedidos con fecha de beneficio y lote previamente guardados.")
+        st.caption("Busca y selecciona únicamente los pedidos que deseas imprimir. Los pedidos nuevos no se incluyen automáticamente.")
         opciones_masivas = {p["Número"]:p for p in registros if p["Estado"] != "anulado"}
         seleccion_masiva = st.multiselect(
             "Pedidos para incluir en el PDF",list(opciones_masivas),
-            default=[p["Número"] for p in pendientes if p["Número"] in opciones_masivas],
+            default=[],
             format_func=lambda n:opciones_masivas[n]["Municipio"]+" — "+n,
             key="pedidos_pdf_masivo")
+        if seleccion_masiva:
+            st.write(f"**{len(seleccion_masiva)} pedido(s) seleccionado(s)**")
+            with st.expander("Ingresar fecha de beneficio y lote para los pedidos seleccionados",expanded=True):
+                st.caption("Completa estos datos una sola vez para los pedidos que aún no los tienen. Los datos existentes se conservarán.")
+                with st.form("datos_masivos_etiquetas"):
+                    fecha_comun = st.date_input("Fecha de beneficio",value=date.today(),format="DD/MM/YYYY")
+                    lote_comun = st.text_input("Lote (obligatorio)")
+                    nit_comun = st.text_input("NIT del municipio (opcional)")
+                    confirmar_comunes = st.checkbox("Confirmo que la fecha y el lote son iguales para los pedidos sin datos guardados")
+                    guardar_comunes = st.form_submit_button("Guardar datos faltantes de los pedidos seleccionados")
+                if guardar_comunes:
+                    if not lote_comun.strip() or not confirmar_comunes:
+                        st.error("Escribe el lote y confirma que estos datos corresponden a los pedidos seleccionados.")
+                    else:
+                        guardados_ok = []
+                        try:
+                            for numero in seleccion_masiva:
+                                existentes = api_supabase("datos_etiqueta_pedido",parametros={
+                                    "select":"numero_pedido,fecha_beneficio,lote,nit",
+                                    "numero_pedido":"eq."+numero,"limit":"1"})
+                                if existentes and existentes[0].get("fecha_beneficio") and existentes[0].get("lote"):
+                                    continue
+                                payload = {"numero_pedido":numero,"fecha_beneficio":fecha_comun.isoformat(),
+                                           "lote":lote_comun.strip(),"nit":nit_comun.strip()}
+                                if existentes:
+                                    api_supabase("datos_etiqueta_pedido","PATCH",payload,{"numero_pedido":"eq."+numero})
+                                else:
+                                    api_supabase("datos_etiqueta_pedido","POST",payload)
+                                guardados_ok.append(numero)
+                            st.success(f"Datos guardados en {len(guardados_ok)} pedidos. Ya puedes preparar el PDF conjunto.")
+                        except Exception as exc:
+                            st.error(f"No se pudieron completar todos los datos: {exc}. Se guardaron {len(guardados_ok)} pedidos; revisa antes de reintentar.")
         if st.button("Preparar PDF de todos los seleccionados",type="primary",disabled=not seleccion_masiva):
             try:
                 from pypdf import PdfReader, PdfWriter

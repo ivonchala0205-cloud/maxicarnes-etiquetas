@@ -53,7 +53,7 @@ def pdf_etiquetas_diseno(lineas, numero_pedido="PRUEBA", lote="",
             c.setFont("Helvetica-Bold",tam)
             c.drawCentredString(W/2, 70.1*mm, producto)
             # Municipio, cliente y NIT
-            for y,etiqueta,valor in [(61,"MUNICIPIO",linea["Municipio"]),(56,"CLIENTE",linea["Cliente"]),(51,"NIT",nit)]:
+            for y,etiqueta,valor in [(61,"MUNICIPIO",linea["Municipio"]),(56,"CLIENTE",linea["Cliente"]),(51,"FABRICADO",nit)]:
                 caja(c, 5*mm, y*mm, 90*mm, 5*mm)
                 c.line(31*mm, y*mm, 31*mm, (y+5)*mm)
                 texto(c, 7*mm,(y+1.4)*mm,etiqueta+":",7,True)

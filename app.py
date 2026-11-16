@@ -21,7 +21,7 @@ def cargar_catalogos():
         params = urlencode({"select": columnas, "order": "id.asc", "limit": "1000"})
         req = Request(
             f"{url}/rest/v1/{tabla}?{params}",
-            headers={"apikey": key, "Authorization": f"Bearer {key}", "Accept": "application/json"},
+            headers={"apikey": key, "Accept": "application/json"},
         )
         with urlopen(req, timeout=20) as resp:
             return json.loads(resp.read().decode("utf-8"))

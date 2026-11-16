@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 import json
+import csv
 import hmac
 from io import BytesIO
 from xml.sax.saxutils import escape
@@ -328,6 +329,36 @@ def pdf_etiquetas(lineas, numero_pedido="VISTA PREVIA", lote="", fecha_beneficio
     return buffer.getvalue()
 
 
+def datos_bartender(lineas, numero_pedido, lote, fecha_beneficio, nit, conservacion):
+    """Datos delimitados: una fila por etiqueta, para conectar a una plantilla BTW."""
+    columnas = ["Pedido", "Municipio", "Cliente", "NIT", "Producto",
+                "Peso_kg", "Peso_g", "Bolsa", "Total_bolsas", "Lote",
+                "Fecha_beneficio", "Fecha_empaque", "Conservacion",
+                "Procesado_por", "Direccion", "Telefono", "Instrucciones"]
+    filas = []
+    for linea in lineas:
+        for i, gramos in enumerate(linea["Bolsas"], 1):
+            filas.append([
+                numero_pedido, linea["Municipio"], linea["Cliente"], nit,
+                linea["Producto"], f"{gramos / 1000:.3f}", str(gramos),
+                str(i), str(len(linea["Bolsas"])), lote,
+                fecha_beneficio.strftime("%d/%m/%Y") if fecha_beneficio else "",
+                date.today().strftime("%d/%m/%Y"), conservacion,
+                EMPACADOR, DIRECCION, "3223721832", INSTRUCCIONES,
+            ])
+    return columnas, filas
+
+
+def archivo_delimitado(columnas, filas, separador):
+    salida = BytesIO()
+    from io import StringIO
+    texto = StringIO(newline="")
+    escritor = csv.writer(texto, delimiter=separador, lineterminator="\\r\\n")
+    escritor.writerow(columnas)
+    escritor.writerows(filas)
+    return texto.getvalue().encode("utf-8-sig")
+
+
 with tab_revision:
     st.subheader("Consolidado de esta sesión")
     st.caption("Los catálogos se leen de Supabase; los pedidos de prueba no se guardan ni se imprimen ni se reciben desde enlaces externos.")
@@ -351,7 +382,7 @@ with tab_revision:
     else:
         st.info("Todavía no hay pedidos registrados en esta sesión.")
     st.divider()
-    st.subheader("Archivo de impresión ZPL - etiquetas 10 x 10 cm")
+    st.subheader("Archivo de datos para BarTender - etiquetas 10 x 10 cm")
     st.caption("Archivo de prueba desde esta sesión; no marca pedidos como impresos. El diseño definitivo con logo gráfico y datos sanitarios validados está pendiente.")
     with st.expander("Datos para la prueba de impresión", expanded=True):
         numero_preview = st.text_input("Número del pedido (referencia de prueba)", value="PRUEBA")
@@ -362,15 +393,23 @@ with tab_revision:
         instrucciones_preview = st.text_input("Instrucciones de uso (predeterminadas)", value=INSTRUCCIONES, disabled=True)
     if pedidos:
         try:
-            zpl = generar_zpl(pedidos, numero_pedido=numero_preview,
-                lote=lote, fecha_beneficio=fecha_beneficio,
-                nit=nit_preview, conservacion=conservacion_preview)
-            st.download_button("Descargar archivo ZPL de prueba (100 x 100 mm)",
-                data=zpl, file_name="maxicarnes_etiquetas_prueba_100x100.zpl",
-                mime="application/octet-stream", type="primary")
-            st.info("Archivo ZPL para probar con la SAT TT448-2 USE (ZPL), 203 dpi. No se carga como diseño editable de BarTender; se envía con una utilidad compatible ZPL. Probar primero una sola etiqueta. El logo es texto provisional.")
+            columnas, filas_bartender = datos_bartender(
+                pedidos, numero_preview, lote, fecha_beneficio,
+                nit_preview, conservacion_preview)
+            st.download_button(
+                "Descargar CSV para BarTender",
+                data=archivo_delimitado(columnas, filas_bartender, ","),
+                file_name="maxicarnes_pedido_bartender.csv",
+                mime="text/csv; charset=utf-8",
+                type="primary")
+            st.download_button(
+                "Descargar TXT para BarTender",
+                data=archivo_delimitado(columnas, filas_bartender, "\\t"),
+                file_name="maxicarnes_pedido_bartender.txt",
+                mime="text/plain; charset=utf-8")
+            st.info("CSV y TXT contienen una fila por bolsa. En BarTender hay que vincular el archivo como origen de datos a una plantilla .BTW; abrirlo como diseño no funciona. No se envía a imprimir automáticamente.")
         except Exception as exc:
-            st.error(f"No se pudo generar el PDF: {exc}")
+            st.error(f"No se pudo generar el archivo: {exc}")
     else:
-        st.info("Para generar un PDF de prueba, introduce cantidades en el formulario y pulsa Guardar pedido. Sin contraseña, quedará solo en esta sesión.")
+        st.info("Para generar el archivo de prueba, introduce cantidades en el formulario y pulsa Guardar pedido. Sin contraseña, quedará solo en esta sesión.")
     st.warning("Pendiente: imprimir desde pedidos históricos de Supabase, registrar impresión y reimprimir etiquetas específicas.")

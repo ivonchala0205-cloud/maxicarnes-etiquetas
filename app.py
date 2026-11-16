@@ -382,8 +382,8 @@ with tab_revision:
     else:
         st.info("Todavía no hay pedidos registrados en esta sesión.")
     st.divider()
-    st.subheader("Archivo de datos para BarTender - etiquetas 10 x 10 cm")
-    st.caption("Archivo de prueba desde esta sesión; no marca pedidos como impresos. El diseño definitivo con logo gráfico y datos sanitarios validados está pendiente.")
+    st.subheader("Descarga PDF - etiquetas 10 x 10 cm")
+    st.caption("PDF de prueba, una página de 10 x 10 cm por bolsa. No marca pedidos como impresos; el diseño y los datos sanitarios deben validarse antes de uso comercial.")
     with st.expander("Datos para la prueba de impresión", expanded=True):
         numero_preview = st.text_input("Número del pedido (referencia de prueba)", value="PRUEBA")
         nit_preview = st.text_input("NIT del municipio (opcional)")
@@ -393,21 +393,18 @@ with tab_revision:
         instrucciones_preview = st.text_input("Instrucciones de uso (predeterminadas)", value=INSTRUCCIONES, disabled=True)
     if pedidos:
         try:
-            columnas, filas_bartender = datos_bartender(
-                pedidos, numero_preview, lote, fecha_beneficio,
-                nit_preview, conservacion_preview)
+            pdf = pdf_etiquetas(
+                pedidos, numero_pedido=numero_preview, lote=lote,
+                fecha_beneficio=fecha_beneficio, nit=nit_preview,
+                direccion=direccion_preview, conservacion=conservacion_preview,
+                instrucciones=instrucciones_preview)
             st.download_button(
-                "Descargar CSV para BarTender",
-                data=archivo_delimitado(columnas, filas_bartender, ","),
-                file_name="maxicarnes_pedido_bartender.csv",
-                mime="text/csv; charset=utf-8",
+                "Descargar etiquetas en PDF (10 x 10 cm)",
+                data=pdf,
+                file_name="maxicarnes_etiquetas_100x100.pdf",
+                mime="application/pdf",
                 type="primary")
-            st.download_button(
-                "Descargar TXT para BarTender",
-                data=archivo_delimitado(columnas, filas_bartender, "\\t"),
-                file_name="maxicarnes_pedido_bartender.txt",
-                mime="text/plain; charset=utf-8")
-            st.info("CSV y TXT contienen una fila por bolsa. En BarTender hay que vincular el archivo como origen de datos a una plantilla .BTW; abrirlo como diseño no funciona. No se envía a imprimir automáticamente.")
+            st.info("Abre el PDF en el computador conectado a la impresora SAT TT448-2 USE. Selecciona papel 100 x 100 mm, escala 100 % o tamaño real, sin ajustar a página. Imprime primero una etiqueta de prueba.")
         except Exception as exc:
             st.error(f"No se pudo generar el archivo: {exc}")
     else:

@@ -368,19 +368,80 @@ def archivo_delimitado(columnas, filas, separador):
     return texto.getvalue().encode("utf-8-sig")
 
 
+def consultar_pedido_por_numero(numero):
+    """Recupera pedido y detalles de Supabase por número exacto."""
+    cabeceras = api_supabase("pedidos", parametros={
+        "select": "id,numero_pedido,municipio_id,estado,enviado_en",
+        "numero_pedido": "eq." + numero.strip(), "limit": "1"
+    })
+    if not cabeceras:
+        return None, []
+    cabecera = cabeceras[0]
+    detalles = api_supabase("detalles_pedido", parametros={
+        "select": "id,cliente_id,producto_id,gramos,capacidad_especial_gramos",
+        "pedido_id": "eq." + str(cabecera["id"]), "limit": "1000"
+    })
+    mids = api_supabase("municipios", parametros={"select":"id,nombre","id":"eq."+str(cabecera["municipio_id"])})
+    if not mids:
+        raise ValueError("El municipio del pedido no está disponible")
+    municipio = mids[0]["nombre"]
+    clientes = api_supabase("clientes", parametros={"select":"id,nombre","municipio_id":"eq."+str(cabecera["municipio_id"]),"limit":"1000"})
+    productos = api_supabase("productos", parametros={"select":"id,nombre","limit":"1000"})
+    nombres_clientes = {x["id"]:x["nombre"] for x in clientes}
+    nombres_productos = {x["id"]:x["nombre"] for x in productos}
+    lineas = []
+    for d in detalles:
+        cliente = nombres_clientes.get(d["cliente_id"], "Cliente no encontrado")
+        producto = nombres_productos.get(d["producto_id"], "Producto no encontrado")
+        kilos = Decimal(d["gramos"]) / Decimal(1000)
+        especial = d.get("capacidad_especial_gramos")
+        bolsas = (distribuir_bolsas(str(kilos), int(especial), 0)
+                  if especial else distribuir_por_destino(str(kilos), municipio, producto))
+        lineas.append({
+            "Numero pedido":cabecera["numero_pedido"],"Municipio":municipio,
+            "Cliente":cliente,"Producto":producto,"Kilos":str(kilos),
+            "Empaque":"Especial" if especial else "Predeterminada",
+            "Bolsas":bolsas,"Capacidad especial":especial
+        })
+    return cabecera, lineas
+
+
 with tab_revision:
-    st.subheader("Pedidos registrados en esta sesión")
-    st.caption("Los pedidos reales se guardan en Supabase. Esta lista aún muestra solo pedidos de la sesión; la consulta histórica está pendiente.")
+    st.subheader("Consultar pedidos guardados")
+    st.caption("Consulta pedidos por su número único. Los cambios y anulaciones de pedidos históricos todavía no están habilitados.")
     with st.expander("Datos que Cristian diligenciará antes de generar etiquetas", expanded=True):
         fecha_beneficio = st.date_input("Fecha de beneficio (manual)", value=None, format="DD/MM/YYYY")
         lote = st.text_input("Número de lote (manual)")
         st.write("Fecha de empaque: se fijará al confirmar la generación real de etiquetas.")
         st.write("Fecha de vencimiento: empaque + 30 días calendario (pendiente validación sanitaria).")
+    st.markdown("#### Buscar un pedido en Supabase")
+    numero_busqueda = st.text_input("Número de pedido guardado (ej. MC-2026-000001)", key="numero_busqueda")
+    if st.button("Consultar pedido guardado"):
+        if not numero_busqueda.strip():
+            st.warning("Ingresa el número del pedido.")
+        else:
+            try:
+                cabecera, lineas_guardadas = consultar_pedido_por_numero(numero_busqueda)
+                if cabecera:
+                    st.session_state.pedido_consultado = cabecera
+                    st.session_state.lineas_consultadas = lineas_guardadas
+                    st.success(f"Pedido {cabecera['numero_pedido']} encontrado. Estado: {cabecera['estado']}.")
+                else:
+                    st.session_state.pop("pedido_consultado", None)
+                    st.session_state.pop("lineas_consultadas", None)
+                    st.warning("No se encontró ese número en Supabase.")
+            except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as exc:
+                st.error(f"No se pudo consultar Supabase: {exc}")
+    if st.session_state.get("pedido_consultado"):
+        st.caption("Pedido recuperado de la base de datos. Puedes revisar sus productos y generar sus etiquetas.")
     todos_los_pedidos = st.session_state.pedidos
     numeros = list(dict.fromkeys(p.get("Numero pedido", "SIN NÚMERO") for p in todos_los_pedidos))
     numero_seleccionado = st.selectbox("Selecciona el pedido para revisar, imprimir o eliminar", numeros) if numeros else None
     pedidos = [p for p in todos_los_pedidos if p.get("Numero pedido", "SIN NÚMERO") == numero_seleccionado] if numero_seleccionado else []
-    if numero_seleccionado:
+    if st.session_state.get("pedido_consultado"):
+        pedidos = st.session_state.get("lineas_consultadas", [])
+        numero_seleccionado = st.session_state["pedido_consultado"]["numero_pedido"]
+    if numero_seleccionado and not st.session_state.get("pedido_consultado"):
         with st.expander("Eliminar pedido", expanded=False):
             st.warning("Solo se quita de esta vista. El pedido real permanece guardado en Supabase.")
             confirmar_borrado = st.checkbox("Confirmo que deseo eliminar este pedido", key="confirmar_borrado")
@@ -428,4 +489,4 @@ with tab_revision:
             st.error(f"No se pudo generar el archivo: {exc}")
     else:
         st.info("Para generar el archivo de prueba, introduce cantidades en el formulario y pulsa Guardar pedido. Sin contraseña, quedará solo en esta sesión.")
-    st.warning("Pendiente: imprimir desde pedidos históricos de Supabase, registrar impresión y reimprimir etiquetas específicas.")
+    st.warning("Pendiente: edición, anulación, historial de impresiones y control de acceso administrativo. No compartas aún esta vista con clientes.")

@@ -1,27 +1,54 @@
 """Prototipo de flujo semanal Maxi Carnes. Sin base de datos ni impresión."""
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
+import json
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 import streamlit as st
 from empaque import distribuir_por_destino, distribuir_bolsas
 
 st.set_page_config(page_title="Maxi Carnes | Pedidos", page_icon="🏷️", layout="wide")
 st.title("Maxi Carnes | Pedidos y etiquetas")
-st.caption("Versión de prueba: los datos solo permanecen durante esta sesión. No enviar aún a clientes.")
+st.caption("Catálogos consultados desde Supabase. Los pedidos todavía son de prueba y no se guardan en la base de datos.")
 
-MUNICIPIOS = [
-    "Gama", "Villagómez", "El Peñón", "Sibaté", "Beltrán", "La Mesa",
-    "Guataquí", "San Juan de Rioseco", "El Colegio", "Supatá", "Bituima",
-    "Tocaima", "Zipacón", "Nimaima", "Ubalá",
-]
-# Ejemplos conocidos; completar catálogo real antes de operar.
-CLIENTES_EJEMPLO = {
-    "Gama": ["Técnico Agropecuario Martín Romero", "Nuestra Señora del Carmen", "Jardín Infantil"],
-    "Sibaté": ["Romeral"],
-}
+# Catálogos reales: lectura desde Supabase, únicamente desde el servidor Streamlit.
+@st.cache_data(ttl=120, show_spinner="Consultando catálogos de Maxi Carnes...")
+def cargar_catalogos():
+    url = st.secrets["SUPABASE_URL"].rstrip("/")
+    key = st.secrets["SUPABASE_KEY"]
+    def consultar(tabla, columnas):
+        params = urlencode({"select": columnas, "order": "id.asc", "limit": "1000"})
+        req = Request(
+            f"{url}/rest/v1/{tabla}?{params}",
+            headers={"apikey": key, "Authorization": f"Bearer {key}", "Accept": "application/json"},
+        )
+        with urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    municipios = consultar("municipios", "id,nombre,activo")
+    clientes = consultar("clientes", "id,municipio_id,nombre,activo")
+    productos = consultar("productos", "id,nombre,activo")
+    nombres = {m["id"]: m["nombre"] for m in municipios if m.get("activo", True)}
+    agrupados = {nombre: [] for nombre in nombres.values()}
+    for cliente in clientes:
+        municipio = nombres.get(cliente["municipio_id"])
+        if municipio and cliente.get("activo", True):
+            agrupados[municipio].append(cliente["nombre"])
+    productos_activos = [p["nombre"] for p in productos if p.get("activo", True)]
+    return agrupados, productos_activos, len(clientes)
+
+try:
+    catalogo_db, productos_db, total_clientes_db = cargar_catalogos()
+except (KeyError, HTTPError, URLError, TimeoutError, ValueError) as exc:
+    st.error("No se pudo consultar Supabase. Comprueba los secretos y la conexión. No se utilizarán datos de ejemplo.")
+    st.caption(f"Tipo de error: {type(exc).__name__}")
+    st.stop()
+
+st.success(f"Conectado a Supabase: {len(catalogo_db)} municipios, {total_clientes_db} clientes y {len(productos_db)} productos registrados.")
 if "municipios" not in st.session_state:
-    st.session_state.municipios = {m: list(CLIENTES_EJEMPLO.get(m, [])) for m in MUNICIPIOS}
+    st.session_state.municipios = catalogo_db
 if "productos" not in st.session_state:
-    st.session_state.productos = ["GOULASH", "CARNE MOLIDA"]
+    st.session_state.productos = productos_db
 if "pedidos" not in st.session_state:
     st.session_state.pedidos = []
 if "fila_id" not in st.session_state:
@@ -33,7 +60,7 @@ tab_pedidos, tab_catalogo, tab_revision = st.tabs(
 
 with tab_catalogo:
     st.subheader("Catálogo de prueba")
-    st.warning("Los cambios en este catálogo NO se guardan permanentemente. No es aún una base de datos.")
+    st.warning("Los municipios, clientes y productos se consultan desde Supabase. Las altas realizadas aquí son temporales y NO se guardan en Supabase.")
     with st.form("nuevo_municipio"):
         nuevo_municipio = st.text_input("Crear municipio")
         if st.form_submit_button("Agregar municipio"):
@@ -147,7 +174,7 @@ with tab_pedidos:
 
 with tab_revision:
     st.subheader("Consolidado semanal — simulación")
-    st.caption("No imprime, no guarda permanentemente ni recibe pedidos desde enlaces externos.")
+    st.caption("Los catálogos se leen de Supabase; los pedidos de prueba no se guardan ni se imprimen ni se reciben desde enlaces externos.")
     with st.expander("Datos que Cristian diligenciará antes de generar etiquetas", expanded=True):
         fecha_beneficio = st.date_input("Fecha de beneficio (manual)", value=None, format="DD/MM/YYYY")
         lote = st.text_input("Número de lote (manual)")

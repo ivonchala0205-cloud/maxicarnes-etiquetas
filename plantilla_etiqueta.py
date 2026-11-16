@@ -28,7 +28,7 @@ def pdf_etiquetas_diseno(lineas, numero_pedido="PRUEBA", lote="",
                          conservacion="Mantener refrigerado entre 0 °C y 4 °C",
                          instrucciones="Cocinar antes de consumir.",
                          direccion="Calle 3 # 12-74 Tenjo Cundinamarca",
-                         invima=""):
+                         invima="233DM"):
     if not lineas or not any(p.get("Bolsas") for p in lineas):
         raise ValueError("No hay etiquetas para generar")
     fecha_empaque = fecha_empaque or date.today()
@@ -61,7 +61,7 @@ def pdf_etiquetas_diseno(lineas, numero_pedido="PRUEBA", lote="",
             texto(c,8*mm,34*mm,f"{gramos:,}".replace(",","." )+" g",17,True,33*mm)
             fechas=[("FECHA DE BENEFICIO",fecha_beneficio.strftime("%d/%m/%Y") if fecha_beneficio else ""),
                     ("FECHA DE EMPAQUE",fecha_empaque.strftime("%d/%m/%Y")),
-                    ("FECHA DE VENCIMIENTO",""),
+                    ("FECHA DE VENCIMIENTO",(fecha_empaque + timedelta(days=30)).strftime("%d/%m/%Y")),
                     ("LOTE",lote)]
             for j,(titulo,valor) in enumerate(fechas):
                 y=(51-(j+1)*5.25)*mm

@@ -594,7 +594,79 @@ with tab_bandeja:
                         "Pesos (g)":", ".join(map(str,p["Bolsas"]))
                     } for p in lineas], use_container_width=True, hide_index=True)
                     st.metric("Etiquetas previstas",sum(len(p["Bolsas"]) for p in lineas))
-                    st.caption("Para modificar cantidades y elegir etiquetas individuales, consulta este mismo número en la pestaña 3.")
+                    st.markdown("#### Corregir una cantidad")
+                    st.caption("Las correcciones se guardan en Supabase. Verifica la cantidad antes de confirmar.")
+                    detalle_opciones = {str(p["Detalle ID"]):p for p in lineas if "Detalle ID" in p}
+                    if detalle_opciones:
+                        detalle_id = st.selectbox(
+                            "Cliente y producto a modificar", list(detalle_opciones),
+                            format_func=lambda k: detalle_opciones[k]["Cliente"]+" — "+detalle_opciones[k]["Producto"],
+                            key="detalle_editar_bandeja")
+                        linea_editar = detalle_opciones[detalle_id]
+                        with st.form("editar_cantidad_bandeja"):
+                            kilos_nuevos = st.text_input("Cantidad en kilos", value=linea_editar["Kilos"])
+                            confirmar_cambio = st.checkbox("Confirmo la corrección de esta cantidad")
+                            if st.form_submit_button("Guardar cantidad corregida"):
+                                if not confirmar_cambio:
+                                    st.error("Debes confirmar la corrección.")
+                                else:
+                                    try:
+                                        gramos_nuevos = convertir_a_gramos(kilos_nuevos)
+                                        if gramos_nuevos <= 0:
+                                            raise ValueError("La cantidad debe ser mayor que cero.")
+                                        api_supabase("detalles_pedido", "PATCH", {"gramos":gramos_nuevos},
+                                                     {"id":"eq."+detalle_id})
+                                        _, actualizadas = consultar_pedido_por_numero(abierto["numero_pedido"])
+                                        st.session_state["bandeja_lineas"] = actualizadas
+                                        st.success("Cantidad actualizada en Supabase.")
+                                        st.rerun()
+                                    except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as exc:
+                                        st.error(f"No se pudo guardar la corrección: {exc}")
+                    st.markdown("#### Imprimir o reimprimir etiquetas")
+                    opciones_bolsas = {}
+                    for i,p in enumerate(lineas):
+                        for j,peso in enumerate(p["Bolsas"]):
+                            clave = f"{i}:{j}"
+                            opciones_bolsas[clave] = f'{p["Cliente"]} — {p["Producto"]} — Bolsa {j+1} de {len(p["Bolsas"])} — {peso} g'
+                    tipo = st.radio("Qué deseas imprimir", ["Pedido completo", "Solo etiquetas seleccionadas"],
+                                    key="tipo_impresion_bandeja", horizontal=True)
+                    elegidas = list(opciones_bolsas)
+                    if tipo == "Solo etiquetas seleccionadas":
+                        elegidas = st.multiselect("Elige las etiquetas",list(opciones_bolsas),
+                                                  format_func=lambda k: opciones_bolsas[k],
+                                                  key="etiquetas_bandeja")
+                    seleccionadas = []
+                    for clave in elegidas:
+                        i,j = (int(x) for x in clave.split(":"))
+                        linea = dict(lineas[i])
+                        linea["Bolsas"] = [lineas[i]["Bolsas"][j]]
+                        seleccionadas.append(linea)
+                    with st.form("datos_pdf_bandeja"):
+                        fecha_b = st.date_input("Fecha de beneficio",value=None,format="DD/MM/YYYY")
+                        lote_b = st.text_input("Lote")
+                        nit_b = st.text_input("NIT del municipio")
+                        imprimir_pdf = st.form_submit_button("Preparar etiquetas seleccionadas")
+                    if imprimir_pdf:
+                        if not seleccionadas:
+                            st.error("Selecciona al menos una etiqueta.")
+                        elif not fecha_b or not lote_b.strip() or not nit_b.strip():
+                            st.error("Completa fecha de beneficio, lote y NIT antes de preparar las etiquetas.")
+                        else:
+                            st.session_state["pdf_bandeja"] = pdf_etiquetas_diseno(
+                                seleccionadas, numero_pedido=abierto["numero_pedido"],
+                                lote=lote_b, fecha_beneficio=fecha_b, nit=nit_b,
+                                conservacion="Mantener refrigerado entre 0 °C y 4 °C",
+                                instrucciones="Producto que requiere cocción para su consumo",
+                                direccion=DIRECCION)
+                            st.session_state["pdf_bandeja_numero"] = abierto["numero_pedido"]
+                    if (st.session_state.get("pdf_bandeja") and
+                        st.session_state.get("pdf_bandeja_numero")==abierto["numero_pedido"]):
+                        st.download_button("Descargar PDF de las etiquetas elegidas",
+                                           data=st.session_state["pdf_bandeja"],
+                                           file_name=abierto["numero_pedido"]+"_etiquetas.pdf",
+                                           mime="application/pdf",type="primary")
+                    st.caption("Descargar el PDF no marca el pedido como impreso. El registro de impresiones está pendiente.")
+
                 else:
                     st.warning("Este pedido existe, pero no contiene productos guardados.")
 

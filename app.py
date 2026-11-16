@@ -572,7 +572,7 @@ def guardar_datos_etiqueta(numero, fecha, lote, nit, fecha_empaque):
         else:
             api_supabase("datos_etiqueta_pedido","POST",payload)
     except ValueError as exc:
-        if "fecha_empaque" in str(exc) and ("PGRST204" in str(exc) or "42703" in str(exc):
+        if "fecha_empaque" in str(exc) and ("PGRST204" in str(exc) or "42703" in str(exc)):
             raise ValueError(
                 "Falta la columna fecha_empaque en Supabase. Ejecuta el archivo "
                 "migracion_fecha_empaque.sql en el editor SQL; no se guardó este pedido."

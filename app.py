@@ -632,22 +632,21 @@ with tab_revision:
                                 st.success("Datos guardados en Supabase.")
                             else:
                                 st.error("El lote es obligatorio.")
-                if seleccion:
-            with st.expander("Verificar productos y kilos que saldrán en el PDF"):
-                for numero_revision in seleccion:
-                    try:
-                        _, lineas_revision = consultar_pedido_por_numero(numero_revision)
-                        resumen_revision = {}
-                        for linea_revision in lineas_revision:
-                            nombre_producto = linea_revision["Producto"]
-                            resumen_revision[nombre_producto] = resumen_revision.get(nombre_producto,Decimal(0))+Decimal(linea_revision["Kilos"])
-                        st.write(f"**{numero_revision}** — "+", ".join(
-                            f"{producto}: {kilos} kg" for producto,kilos in resumen_revision.items()))
-                        st.caption(f"{sum(len(linea['Bolsas']) for linea in lineas_revision)} etiquetas; "+
-                                   f"{sum(Decimal(linea['Kilos']) for linea in lineas_revision)} kg en total.")
-                    except Exception as exc:
-                        st.error(f"No se pudo revisar {numero_revision}: {exc}")
-        if st.button("Preparar PDF de los pedidos seleccionados",type="primary",key="generar_pendientes"):
+                with st.expander("Verificar productos y kilos que saldrán en el PDF"):
+                    for numero_revision in seleccion:
+                        try:
+                            _, lineas_revision = consultar_pedido_por_numero(numero_revision)
+                            resumen_revision = {}
+                            for linea_revision in lineas_revision:
+                                nombre_producto = linea_revision["Producto"]
+                                resumen_revision[nombre_producto] = resumen_revision.get(nombre_producto,Decimal(0))+Decimal(linea_revision["Kilos"])
+                            st.write(f"**{numero_revision}** — "+", ".join(
+                                f"{producto}: {kilos} kg" for producto,kilos in resumen_revision.items()))
+                            st.caption(f"{sum(len(linea['Bolsas']) for linea in lineas_revision)} etiquetas; "+
+                                       f"{sum(Decimal(linea['Kilos']) for linea in lineas_revision)} kg en total.")
+                        except Exception as exc:
+                            st.error(f"No se pudo revisar {numero_revision}: {exc}")
+                if st.button("Preparar PDF de los pedidos seleccionados",type="primary",key="generar_pendientes"):
                     try:
                         pdf,paginas = generar_pdf_pedidos(seleccion)
                         st.session_state["pdf_pendientes"] = pdf

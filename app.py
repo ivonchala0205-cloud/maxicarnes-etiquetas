@@ -66,16 +66,6 @@ def guardar_pedido_real(municipio, lineas, municipios_db, clientes_db, productos
         raise ValueError("No existe una semana abierta en Supabase.")
     municipio_id = municipios_db[municipio]
     semana_id = semanas[0]["id"]
-    previos = api_supabase("pedidos", parametros={
-        "select": "id,numero_pedido", "semana_id": f"eq.{semana_id}",
-        "municipio_id": f"eq.{municipio_id}", "limit": "1"
-    })
-    if previos:
-        raise ValueError(
-            "Este municipio ya tiene un pedido en la semana abierta: "
-            + str(previos[0].get("numero_pedido") or previos[0]["id"])
-            + ". No se creará un duplicado."
-        )
     detalles = []
     for linea in lineas:
         cliente_id = clientes_db.get((municipio_id, linea["Cliente"]))
@@ -286,7 +276,7 @@ with tab_pedidos:
                     pedido_guardado = guardar_pedido_real(municipio, nuevos, mids, cids, pids)
                     st.session_state.pedidos = [p for p in st.session_state.pedidos if p["Municipio"] != municipio] + nuevos
                     st.success("Pedido guardado en Supabase: " + str(pedido_guardado.get("numero_pedido") or pedido_guardado["id"]))
-                    st.info("No vuelvas a enviarlo: la semana admite un pedido por municipio. Impresión aún no disponible.")
+                    st.info("Cada envío crea un pedido nuevo, incluso en la misma semana. Impresión aún no disponible.")
                 except (HTTPError, URLError, KeyError, ValueError, RuntimeError, TimeoutError) as exc:
                     st.error("No se pudo confirmar el guardado. Revisa Supabase antes de reintentar.")
                     st.caption(f"Error: {type(exc).__name__}" + (f" (HTTP {exc.code})" if isinstance(exc, HTTPError) else f": {exc}"))

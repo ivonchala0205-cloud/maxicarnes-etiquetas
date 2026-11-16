@@ -675,6 +675,57 @@ with tab_bandeja:
         c.metric("Marcados como impresos", len(impresos))
         filtro = st.selectbox("Mostrar pedidos", ["Todos","Pendientes / sin confirmar","Impresos"])
         visibles = registros if filtro == "Todos" else (impresos if filtro == "Impresos" else pendientes)
+        st.markdown("#### PDF conjunto de pedidos")
+        st.caption("Genera un único PDF de etiquetas 10 × 10 cm para varios municipios. Solo incluye pedidos con fecha de beneficio y lote previamente guardados.")
+        opciones_masivas = {p["Número"]:p for p in registros if p["Estado"] != "anulado"}
+        seleccion_masiva = st.multiselect(
+            "Pedidos para incluir en el PDF",list(opciones_masivas),
+            default=[p["Número"] for p in pendientes if p["Número"] in opciones_masivas],
+            format_func=lambda n:opciones_masivas[n]["Municipio"]+" — "+n,
+            key="pedidos_pdf_masivo")
+        if st.button("Preparar PDF de todos los seleccionados",type="primary",disabled=not seleccion_masiva):
+            try:
+                from pypdf import PdfReader, PdfWriter
+                writer = PdfWriter()
+                faltantes = []
+                agregados = []
+                for numero_masivo in seleccion_masiva:
+                    datos = api_supabase("datos_etiqueta_pedido",parametros={
+                        "select":"fecha_beneficio,lote,nit",
+                        "numero_pedido":"eq."+numero_masivo,"limit":"1"})
+                    if not datos or not datos[0].get("fecha_beneficio") or not datos[0].get("lote"):
+                        faltantes.append(numero_masivo)
+                        continue
+                    cabecera_m, lineas_m = consultar_pedido_por_numero(numero_masivo)
+                    if not cabecera_m or not lineas_m:
+                        faltantes.append(numero_masivo)
+                        continue
+                    meta = datos[0]
+                    pdf_uno = pdf_etiquetas_diseno(
+                        lineas_m,numero_pedido=numero_masivo,
+                        lote=meta["lote"],fecha_beneficio=date.fromisoformat(meta["fecha_beneficio"]),
+                        nit=meta.get("nit") or "",
+                        conservacion="Mantener refrigerado entre 0 °C y 4 °C",
+                        instrucciones="Producto que requiere cocción para su consumo",direccion=DIRECCION)
+                    for pagina in PdfReader(BytesIO(pdf_uno)).pages:
+                        writer.add_page(pagina)
+                    agregados.append(numero_masivo)
+                if faltantes:
+                    st.session_state.pop("pdf_masivo",None)
+                    st.error("No se generó el PDF porque faltan datos de beneficio/lote o detalles en: "+", ".join(faltantes)+". Abre esos pedidos y prepara sus etiquetas primero.")
+                elif agregados:
+                    salida = BytesIO()
+                    writer.write(salida)
+                    st.session_state["pdf_masivo"] = salida.getvalue()
+                    st.session_state["pdf_masivo_pedidos"] = tuple(agregados)
+                    st.success(f"PDF preparado: {len(agregados)} pedidos, {len(writer.pages)} etiquetas.")
+            except Exception as exc:
+                st.error(f"No se pudo preparar el PDF conjunto: {exc}")
+        if st.session_state.get("pdf_masivo") and tuple(seleccion_masiva)==st.session_state.get("pdf_masivo_pedidos"):
+            st.download_button("Descargar un solo PDF para imprimir",data=st.session_state["pdf_masivo"],
+                               file_name="MaxiCarnes_etiquetas_todos_los_pedidos.pdf",
+                               mime="application/pdf",type="primary")
+            st.caption("Descargar no imprime automáticamente ni cambia el estado de los pedidos.")
         if visibles:
             st.dataframe(visibles, hide_index=True, use_container_width=True)
             opciones = [p["Número"] for p in visibles]

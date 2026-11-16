@@ -42,7 +42,10 @@ if __name__ == "__main__":
 
 # Excepciones específicas por municipio y producto (gramos por bolsa).
 REGLAS_ESPECIALES = {
-    ("SIBATE", "CARNE MOLIDA"): {"capacidad_gramos": 2000, "tolerancia_gramos": 0},
+    ("SIBATE", "CARNE MOLIDA"): {"capacidad_gramos": 2000, "tolerancia_gramos": 999},
+    ("SIBATE", "CARNE DE RES - MOLIDA"): {"capacidad_gramos": 2000, "tolerancia_gramos": 999},
+    ("SIBATE", "CARNE DE RES - GOULASH"): {"capacidad_gramos": 2000, "tolerancia_gramos": 999},
+    ("SIBATE", "GOULASH"): {"capacidad_gramos": 2000, "tolerancia_gramos": 999},
 }
 
 

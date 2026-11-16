@@ -189,7 +189,12 @@ with st.expander("Importar Excel original de Cristian (por hojas)", expanded=Fal
                 for columna in range(df.shape[1]):
                     encabezado = df.iat[0,columna] if df.shape[0] else ""
                     if pd.notna(encabezado) and "CARNE" in normalizar(encabezado):
-                        producto = mapa_p.get(normalizar(encabezado))
+                        encabezado_normal = normalizar(encabezado)
+                        producto = mapa_p.get(encabezado_normal)
+                        if not producto and "MOLIDA" in encabezado_normal:
+                            producto = next((nombre for nombre in pids if "MOLIDA" in normalizar(nombre)),None)
+                        if not producto and "GOULASH" in encabezado_normal:
+                            producto = next((nombre for nombre in pids if "GOULASH" in normalizar(nombre)),None)
                         if not producto:
                             errores_excel.append(f"Hoja {hoja}: producto no registrado: {encabezado}")
                             continue
@@ -236,6 +241,11 @@ with st.expander("Importar Excel original de Cristian (por hojas)", expanded=Fal
                 st.warning("No se encontraron cantidades para importar.")
             else:
                 st.success(f"Reconocidos {len(grupos)} municipios y {sum(map(len,grupos.values()))} registros.")
+                for municipio_revision, lineas_revision in grupos.items():
+                    if normalizar(municipio_revision) == "SIBATE":
+                        st.info("Sibaté — productos detectados: "+", ".join(
+                            f"{producto}: {sum(Decimal(p['Kilos']) for p in lineas_revision if p['Producto']==producto)} kg"
+                            for producto in dict.fromkeys(p["Producto"] for p in lineas_revision)))
                 opciones = ["Todos los municipios"] + list(grupos)
                 filtro = st.selectbox("Qué deseas cargar",opciones)
                 seleccion = grupos if filtro == "Todos los municipios" else {filtro:grupos[filtro]}
@@ -622,7 +632,22 @@ with tab_revision:
                                 st.success("Datos guardados en Supabase.")
                             else:
                                 st.error("El lote es obligatorio.")
-                if st.button("Preparar PDF de los pedidos seleccionados",type="primary",key="generar_pendientes"):
+                if seleccion:
+            with st.expander("Verificar productos y kilos que saldrán en el PDF"):
+                for numero_revision in seleccion:
+                    try:
+                        _, lineas_revision = consultar_pedido_por_numero(numero_revision)
+                        resumen_revision = {}
+                        for linea_revision in lineas_revision:
+                            nombre_producto = linea_revision["Producto"]
+                            resumen_revision[nombre_producto] = resumen_revision.get(nombre_producto,Decimal(0))+Decimal(linea_revision["Kilos"])
+                        st.write(f"**{numero_revision}** — "+", ".join(
+                            f"{producto}: {kilos} kg" for producto,kilos in resumen_revision.items()))
+                        st.caption(f"{sum(len(linea['Bolsas']) for linea in lineas_revision)} etiquetas; "+
+                                   f"{sum(Decimal(linea['Kilos']) for linea in lineas_revision)} kg en total.")
+                    except Exception as exc:
+                        st.error(f"No se pudo revisar {numero_revision}: {exc}")
+        if st.button("Preparar PDF de los pedidos seleccionados",type="primary",key="generar_pendientes"):
                     try:
                         pdf,paginas = generar_pdf_pedidos(seleccion)
                         st.session_state["pdf_pendientes"] = pdf

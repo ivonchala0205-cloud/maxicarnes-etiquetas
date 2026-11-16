@@ -569,7 +569,35 @@ with tab_bandeja:
         visibles = registros if filtro == "Todos" else (impresos if filtro == "Impresos" else pendientes)
         if visibles:
             st.dataframe(visibles, hide_index=True, use_container_width=True)
-            st.info("Para revisar el detalle, copia el número del pedido y búscalo en la pestaña 3. La selección directa desde esta tabla está pendiente.")
+            opciones = [p["Número"] for p in visibles]
+            elegido = st.selectbox("Pedido que deseas abrir", opciones, key="pedido_bandeja")
+            if st.button("Abrir pedido y ver productos", type="primary", key="abrir_pedido_bandeja"):
+                try:
+                    cabecera, lineas = consultar_pedido_por_numero(elegido)
+                    if cabecera:
+                        st.session_state["bandeja_abierto"] = cabecera
+                        st.session_state["bandeja_lineas"] = lineas
+                    else:
+                        st.error("El pedido no se encontró en Supabase.")
+                except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as exc:
+                    st.error(f"No se pudo abrir el pedido: {exc}")
+            abierto = st.session_state.get("bandeja_abierto")
+            if abierto:
+                lineas = st.session_state.get("bandeja_lineas", [])
+                st.markdown(f'### Pedido {abierto["numero_pedido"]}')
+                st.write(f'**Fecha de creación:** {abierto.get("enviado_en") or "No registrada"}  |  **Estado:** {abierto.get("estado") or "Sin estado"}')
+                if lineas:
+                    st.dataframe([{
+                        "Municipio":p["Municipio"], "Cliente":p["Cliente"],
+                        "Producto":p["Producto"], "Kilos":p["Kilos"],
+                        "Bolsas":len(p["Bolsas"]),
+                        "Pesos (g)":", ".join(map(str,p["Bolsas"]))
+                    } for p in lineas], use_container_width=True, hide_index=True)
+                    st.metric("Etiquetas previstas",sum(len(p["Bolsas"]) for p in lineas))
+                    st.caption("Para modificar cantidades y elegir etiquetas individuales, consulta este mismo número en la pestaña 3.")
+                else:
+                    st.warning("Este pedido existe, pero no contiene productos guardados.")
+
         else:
             st.info("No hay pedidos en esta categoría.")
         st.warning("Esta bandeja es una vista inicial. Antes de compartir la aplicación con clientes debemos proteger el acceso a la información administrativa.")

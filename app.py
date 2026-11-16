@@ -643,14 +643,14 @@ with tab_bandeja:
                         seleccionadas.append(linea)
                     with st.form("datos_pdf_bandeja"):
                         fecha_b = st.date_input("Fecha de beneficio",value=None,format="DD/MM/YYYY")
-                        lote_b = st.text_input("Lote")
+                        lote_b = st.text_input("Lote (opcional)")
                         nit_b = st.text_input("NIT del municipio")
                         imprimir_pdf = st.form_submit_button("Preparar etiquetas seleccionadas")
                     if imprimir_pdf:
                         if not seleccionadas:
                             st.error("Selecciona al menos una etiqueta.")
-                        elif not fecha_b or not lote_b.strip() or not nit_b.strip():
-                            st.error("Completa fecha de beneficio, lote y NIT antes de preparar las etiquetas.")
+                        elif not fecha_b or not nit_b.strip():
+                            st.error("Completa fecha de beneficio y NIT antes de preparar las etiquetas. El lote es opcional.")
                         else:
                             st.session_state["pdf_bandeja"] = pdf_etiquetas_diseno(
                                 seleccionadas, numero_pedido=abierto["numero_pedido"],

@@ -41,7 +41,7 @@ try:
     catalogo_db, productos_db, total_clientes_db = cargar_catalogos()
 except (KeyError, HTTPError, URLError, TimeoutError, ValueError) as exc:
     st.error("No se pudo consultar Supabase. Comprueba los secretos y la conexión. No se utilizarán datos de ejemplo.")
-    st.caption(f"Tipo de error: {type(exc).__name__}")
+    st.caption(f"Tipo de error: {type(exc).__name__}" + (f" · Código HTTP: {exc.code}" if isinstance(exc, HTTPError) else ""))
     st.stop()
 
 st.success(f"Conectado a Supabase: {len(catalogo_db)} municipios, {total_clientes_db} clientes y {len(productos_db)} productos registrados.")

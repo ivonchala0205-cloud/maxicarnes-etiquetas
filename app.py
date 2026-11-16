@@ -641,24 +641,50 @@ with tab_bandeja:
                         linea = dict(lineas[i])
                         linea["Bolsas"] = [lineas[i]["Bolsas"][j]]
                         seleccionadas.append(linea)
+                    # Recuperar los datos de la etiqueta por pedido, incluso en otra sesión.
+                    numero_actual = abierto["numero_pedido"]
+                    try:
+                        guardados = api_supabase("datos_etiqueta_pedido", parametros={
+                            "select":"numero_pedido,fecha_beneficio,lote,nit",
+                            "numero_pedido":"eq."+numero_actual,"limit":"1"})
+                    except HTTPError as exc:
+                        if exc.code == 404:
+                            guardados = []
+                            st.warning("Falta crear la tabla de datos de etiquetas en Supabase para conservar estos campos entre sesiones.")
+                        else:
+                            raise
+                    datos_previos = guardados[0] if guardados else {}
                     with st.form("datos_pdf_bandeja"):
-                        fecha_b = st.date_input("Fecha de beneficio",value=None,format="DD/MM/YYYY")
-                        lote_b = st.text_input("Lote (opcional)")
-                        nit_b = st.text_input("NIT del municipio")
-                        imprimir_pdf = st.form_submit_button("Preparar etiquetas seleccionadas")
+                        fecha_anterior = date.fromisoformat(datos_previos["fecha_beneficio"]) if datos_previos.get("fecha_beneficio") else None
+                        fecha_b = st.date_input("Fecha de beneficio",value=fecha_anterior,format="DD/MM/YYYY")
+                        lote_b = st.text_input("Lote (obligatorio)",value=datos_previos.get("lote") or "")
+                        nit_b = st.text_input("NIT del municipio (opcional)",value=datos_previos.get("nit") or "")
+                        imprimir_pdf = st.form_submit_button("Guardar datos y preparar etiquetas seleccionadas")
                     if imprimir_pdf:
                         if not seleccionadas:
                             st.error("Selecciona al menos una etiqueta.")
-                        elif not fecha_b or not nit_b.strip():
-                            st.error("Completa fecha de beneficio y NIT antes de preparar las etiquetas. El lote es opcional.")
+                        elif not fecha_b or not lote_b.strip():
+                            st.error("Completa la fecha de beneficio y el lote. El NIT es opcional.")
                         else:
-                            st.session_state["pdf_bandeja"] = pdf_etiquetas_diseno(
-                                seleccionadas, numero_pedido=abierto["numero_pedido"],
-                                lote=lote_b, fecha_beneficio=fecha_b, nit=nit_b,
-                                conservacion="Mantener refrigerado entre 0 °C y 4 °C",
-                                instrucciones="Producto que requiere cocción para su consumo",
-                                direccion=DIRECCION)
-                            st.session_state["pdf_bandeja_numero"] = abierto["numero_pedido"]
+                            try:
+                                payload = {"numero_pedido":numero_actual,
+                                           "fecha_beneficio":fecha_b.isoformat(),
+                                           "lote":lote_b.strip(),"nit":nit_b.strip()}
+                                if guardados:
+                                    api_supabase("datos_etiqueta_pedido","PATCH",payload,
+                                                 {"numero_pedido":"eq."+numero_actual})
+                                else:
+                                    api_supabase("datos_etiqueta_pedido","POST",payload)
+                                st.session_state["pdf_bandeja"] = pdf_etiquetas_diseno(
+                                    seleccionadas, numero_pedido=numero_actual,
+                                    lote=lote_b, fecha_beneficio=fecha_b, nit=nit_b,
+                                    conservacion="Mantener refrigerado entre 0 °C y 4 °C",
+                                    instrucciones="Producto que requiere cocción para su consumo",
+                                    direccion=DIRECCION)
+                                st.session_state["pdf_bandeja_numero"] = numero_actual
+                                st.success("Datos de la etiqueta guardados en Supabase para futuras modificaciones y reimpresiones.")
+                            except (HTTPError, URLError, ValueError, KeyError, TimeoutError) as exc:
+                                st.error(f"No se pudieron guardar los datos de la etiqueta: {exc}")
                     if (st.session_state.get("pdf_bandeja") and
                         st.session_state.get("pdf_bandeja_numero")==abierto["numero_pedido"]):
                         st.download_button("Descargar PDF de las etiquetas elegidas",

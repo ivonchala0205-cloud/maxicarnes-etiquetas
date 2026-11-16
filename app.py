@@ -21,7 +21,7 @@ from plantilla_etiqueta import pdf_etiquetas_diseno
 
 st.set_page_config(page_title="Maxi Carnes | Pedidos", page_icon="🏷️", layout="wide")
 st.title("Maxi Carnes | Pedidos y etiquetas")
-st.caption("Catálogos desde Supabase. Guardado permanente disponible solo en modo administrador autorizado.")
+st.caption("Catálogos y pedidos conectados a Supabase.")
 
 # Catálogos reales: lectura desde Supabase, únicamente desde el servidor Streamlit.
 @st.cache_data(ttl=120, show_spinner="Consultando catálogos de Maxi Carnes...")
@@ -152,10 +152,10 @@ if "fila_id" not in st.session_state:
 
 # Pruebas sin contraseña: guardar en la sesión, sin exponer escrituras de Supabase.
 # El guardado real requiere un acceso administrativo protegido.
-autorizado = False
+autorizado = bool(total_clientes_db)
 with st.sidebar:
-    st.subheader("Modo de prueba")
-    st.info("Sin contraseña: puedes crear pedidos de prueba y descargar sus etiquetas. No se guardan en Supabase.")
+    st.subheader("Pedidos")
+    st.info("Los pedidos del catálogo real se guardan en Supabase. Las altas de catálogo siguen siendo temporales.")
 
 tab_pedidos, tab_catalogo, tab_revision = st.tabs(
     ["1. Formulario por municipio", "2. Municipios, clientes y productos", "3. Revisión semanal"]
@@ -285,9 +285,11 @@ with tab_pedidos:
                 try:
                     mids, cids, pids = ids_catalogo()
                     pedido_guardado = guardar_pedido_real(municipio, nuevos, mids, cids, pids)
-                    st.session_state.pedidos = [p for p in st.session_state.pedidos if p["Municipio"] != municipio] + nuevos
-                    st.success("Pedido guardado en Supabase: " + str(pedido_guardado.get("numero_pedido") or pedido_guardado["id"]))
-                    st.info("Cada envío crea un pedido nuevo, incluso en la misma semana. Impresión aún no disponible.")
+                    numero = str(pedido_guardado.get("numero_pedido") or pedido_guardado["id"])
+                    for p in nuevos:
+                        p["Numero pedido"] = numero
+                    st.session_state.pedidos.extend(nuevos)
+                    st.success("Pedido guardado permanentemente en Supabase: " + numero)
                 except (HTTPError, URLError, KeyError, ValueError, RuntimeError, TimeoutError) as exc:
                     st.error("No se pudo confirmar el guardado. Revisa Supabase antes de reintentar.")
                     st.caption(f"Error: {type(exc).__name__}" + (f" (HTTP {exc.code})" if isinstance(exc, HTTPError) else f": {exc}"))
@@ -368,7 +370,7 @@ def archivo_delimitado(columnas, filas, separador):
 
 with tab_revision:
     st.subheader("Pedidos registrados en esta sesión")
-    st.caption("Estos pedidos todavía son temporales: no se reciben desde otros computadores ni se guardan en Supabase.")
+    st.caption("Los pedidos reales se guardan en Supabase. Esta lista aún muestra solo pedidos de la sesión; la consulta histórica está pendiente.")
     with st.expander("Datos que Cristian diligenciará antes de generar etiquetas", expanded=True):
         fecha_beneficio = st.date_input("Fecha de beneficio (manual)", value=None, format="DD/MM/YYYY")
         lote = st.text_input("Número de lote (manual)")
@@ -380,9 +382,9 @@ with tab_revision:
     pedidos = [p for p in todos_los_pedidos if p.get("Numero pedido", "SIN NÚMERO") == numero_seleccionado] if numero_seleccionado else []
     if numero_seleccionado:
         with st.expander("Eliminar pedido", expanded=False):
-            st.warning("Esta acción elimina el pedido seleccionado de esta sesión. No afecta registros de Supabase.")
+            st.warning("Solo se quita de esta vista. El pedido real permanece guardado en Supabase.")
             confirmar_borrado = st.checkbox("Confirmo que deseo eliminar este pedido", key="confirmar_borrado")
-            if st.button("Eliminar pedido seleccionado", disabled=not confirmar_borrado):
+            if st.button("Quitar de esta vista", disabled=not confirmar_borrado):
                 st.session_state.pedidos = [p for p in st.session_state.pedidos if p.get("Numero pedido", "SIN NÚMERO") != numero_seleccionado]
                 st.rerun()
     municipios_con_pedido = {p["Municipio"] for p in pedidos}

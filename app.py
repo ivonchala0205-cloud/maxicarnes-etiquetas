@@ -398,7 +398,7 @@ def consultar_pedido_por_numero(numero):
         bolsas = (distribuir_bolsas(str(kilos), int(especial), 0)
                   if especial else distribuir_por_destino(str(kilos), municipio, producto))
         lineas.append({
-            "Numero pedido":cabecera["numero_pedido"],"Municipio":municipio,
+            "Detalle ID":d["id"],"Numero pedido":cabecera["numero_pedido"],"Municipio":municipio,
             "Cliente":cliente,"Producto":producto,"Kilos":str(kilos),
             "Empaque":"Especial" if especial else "Predeterminada",
             "Bolsas":bolsas,"Capacidad especial":especial
@@ -461,6 +461,50 @@ with tab_revision:
         } for p in pedidos], use_container_width=True, hide_index=True)
     else:
         st.info("Todavía no hay pedidos registrados en esta sesión.")
+    if pedidos:
+        st.markdown("#### Seleccionar etiquetas específicas")
+        opciones_etiquetas = []
+        for i, linea in enumerate(pedidos):
+            for j, peso in enumerate(linea["Bolsas"]):
+                opciones_etiquetas.append((i, j, f'{linea["Cliente"]} | {linea["Producto"]} | Bolsa {j+1}/{len(linea["Bolsas"])} | {peso} g'))
+        claves = [f"{i}:{j}" for i,j,_ in opciones_etiquetas]
+        titulos = {f"{i}:{j}": titulo for i,j,titulo in opciones_etiquetas}
+        modo_impresion = st.radio("Qué etiquetas generar", ["Todas las etiquetas del pedido", "Solo las etiquetas seleccionadas"], horizontal=True)
+        if modo_impresion == "Solo las etiquetas seleccionadas":
+            elegidas = st.multiselect("Selecciona las bolsas que necesitas reimprimir", claves, format_func=lambda k: titulos[k])
+            etiquetas_para_pdf = []
+            for i,j,_ in opciones_etiquetas:
+                if f"{i}:{j}" in elegidas:
+                    copia = dict(pedidos[i])
+                    copia["Bolsas"] = [pedidos[i]["Bolsas"][j]]
+                    etiquetas_para_pdf.append(copia)
+        else:
+            etiquetas_para_pdf = pedidos
+        if st.session_state.get("pedido_consultado"):
+            with st.expander("Corregir cantidades del pedido guardado", expanded=False):
+                st.warning("Las correcciones cambian el pedido en Supabase. Revisa los pesos antes de confirmar. No modifica el historial de impresiones.")
+                for indice, linea in enumerate(pedidos):
+                    if "Detalle ID" not in linea:
+                        continue
+                    with st.form(f"corregir_{linea['Detalle ID']}"):
+                        st.write(f'{linea["Cliente"]} — {linea["Producto"]}')
+                        nuevo_peso = st.text_input("Cantidad total en kg", value=linea["Kilos"], key=f'editar_{linea["Detalle ID"]}')
+                        confirmar = st.checkbox("Confirmo esta corrección", key=f'confirmar_{linea["Detalle ID"]}')
+                        if st.form_submit_button("Guardar corrección"):
+                            if not confirmar:
+                                st.error("Confirma la corrección antes de guardar.")
+                            else:
+                                try:
+                                    gramos_nuevos = convertir_a_gramos(nuevo_peso)
+                                    api_supabase("detalles_pedido", "PATCH", {"gramos": gramos_nuevos}, {"id": "eq."+str(linea["Detalle ID"])})
+                                    cabecera, nuevas_lineas = consultar_pedido_por_numero(st.session_state["pedido_consultado"]["numero_pedido"])
+                                    st.session_state.lineas_consultadas = nuevas_lineas
+                                    st.success("Cantidad actualizada en Supabase. Se recalcularon las bolsas.")
+                                    st.rerun()
+                                except (HTTPError, URLError, ValueError, KeyError, TimeoutError) as exc:
+                                    st.error(f"No se pudo guardar la corrección: {exc}")
+    else:
+        etiquetas_para_pdf = []
     st.divider()
     st.subheader("Imprimir etiquetas PDF - 10 x 10 cm")
     st.caption("Plantilla con logo y cuadrícula del diseño aprobado. Una página de 10 x 10 cm por bolsa. Confirmar vigencia sanitaria del código INVIMA, conservación y vencimiento antes de uso comercial.")
@@ -471,10 +515,10 @@ with tab_revision:
         direccion_preview = st.text_input("Dirección de procesado y empacado (predeterminada)", value=DIRECCION, disabled=True)
         conservacion_preview = st.text_input("Condiciones de conservación (predeterminadas)", value="Mantener refrigerado entre 0 °C y 4 °C", disabled=True)
         instrucciones_preview = st.text_input("Instrucciones de uso (predeterminadas)", value=INSTRUCCIONES, disabled=True)
-    if pedidos:
+    if etiquetas_para_pdf:
         try:
             pdf = pdf_etiquetas_diseno(
-                pedidos, numero_pedido=numero_preview, lote=lote,
+                etiquetas_para_pdf, numero_pedido=numero_preview, lote=lote,
                 fecha_beneficio=fecha_beneficio, nit=nit_preview,
                 direccion=direccion_preview, conservacion=conservacion_preview,
                 instrucciones=instrucciones_preview)
@@ -488,5 +532,5 @@ with tab_revision:
         except Exception as exc:
             st.error(f"No se pudo generar el archivo: {exc}")
     else:
-        st.info("Para generar el archivo de prueba, introduce cantidades en el formulario y pulsa Guardar pedido. Sin contraseña, quedará solo en esta sesión.")
+        st.info("Selecciona al menos una etiqueta o consulta un pedido para generar el PDF.")
     st.warning("Pendiente: edición, anulación, historial de impresiones y control de acceso administrativo. No compartas aún esta vista con clientes.")

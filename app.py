@@ -654,12 +654,21 @@ with tab_bandeja:
                         else:
                             raise
                     datos_previos = guardados[0] if guardados else {}
+                    if seleccionadas:
+                        st.markdown("##### Información de las etiquetas seleccionadas")
+                        st.dataframe([{"Municipio":p["Municipio"],"Cliente":p["Cliente"],"Producto":p["Producto"],"Peso (g)":p["Bolsas"][0]} for p in seleccionadas], hide_index=True, use_container_width=True)
+                        st.caption("Solo se muestran las etiquetas elegidas. Los cambios de peso de abajo se aplican al PDF, no al pedido original.")
                     with st.form("datos_pdf_bandeja"):
                         fecha_anterior = date.fromisoformat(datos_previos["fecha_beneficio"]) if datos_previos.get("fecha_beneficio") else None
                         fecha_b = st.date_input("Fecha de beneficio",value=fecha_anterior,format="DD/MM/YYYY")
                         lote_b = st.text_input("Lote (obligatorio)",value=datos_previos.get("lote") or "")
                         nit_b = st.text_input("NIT del municipio (opcional)",value=datos_previos.get("nit") or "")
-                        imprimir_pdf = st.form_submit_button("Guardar datos y preparar etiquetas seleccionadas")
+                        pesos_editados = []
+                        for idx, etiqueta in enumerate(seleccionadas):
+                            st.markdown("**Etiqueta "+str(idx+1)+": "+etiqueta["Cliente"]+" — "+etiqueta["Producto"]+"**")
+                            peso_editado = st.number_input("Peso neto (g), etiqueta "+str(idx+1), min_value=1, value=int(etiqueta["Bolsas"][0]), step=1, key="peso_etiqueta_"+numero_actual+"_"+str(idx))
+                            pesos_editados.append(int(peso_editado))
+                        imprimir_pdf = st.form_submit_button("Preparar etiquetas seleccionadas")
                     if imprimir_pdf:
                         if not seleccionadas:
                             st.error("Selecciona al menos una etiqueta.")
@@ -675,8 +684,9 @@ with tab_bandeja:
                                                  {"numero_pedido":"eq."+numero_actual})
                                 else:
                                     api_supabase("datos_etiqueta_pedido","POST",payload)
+                                etiquetas_corregidas = [dict(etiqueta, Bolsas=[peso]) for etiqueta, peso in zip(seleccionadas, pesos_editados)]
                                 st.session_state["pdf_bandeja"] = pdf_etiquetas_diseno(
-                                    seleccionadas, numero_pedido=numero_actual,
+                                    etiquetas_corregidas, numero_pedido=numero_actual,
                                     lote=lote_b, fecha_beneficio=fecha_b, nit=nit_b,
                                     conservacion="Mantener refrigerado entre 0 °C y 4 °C",
                                     instrucciones="Producto que requiere cocción para su consumo",

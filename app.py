@@ -158,7 +158,7 @@ with st.sidebar:
     st.info("Los pedidos del catálogo real se guardan en Supabase. Las altas de catálogo siguen siendo temporales.")
 
 tab_pedidos, tab_catalogo, tab_revision, tab_bandeja = st.tabs(
-    ["1. Formulario por municipio", "2. Municipios, clientes y productos", "3. Revisión semanal", "4. Pedidos recibidos"]
+    ["1. Formulario por municipio", "2. Municipios, clientes y productos", "3. Pendientes de impresión", "4. Impresos e historial"]
 )
 
 with st.expander("Importar Excel original de Cristian (por hojas)", expanded=False):
@@ -531,374 +531,213 @@ def listar_pedidos_guardados():
     } for p in registros]
 
 
-with tab_revision:
-    st.subheader("Consultar pedidos guardados")
-    st.caption("Consulta pedidos por su número único. Los cambios y anulaciones de pedidos históricos todavía no están habilitados.")
-    with st.expander("Datos que Cristian diligenciará antes de generar etiquetas", expanded=True):
-        fecha_beneficio = st.date_input("Fecha de beneficio (manual)", value=None, format="DD/MM/YYYY")
-        lote = st.text_input("Número de lote (manual)")
-        st.write("Fecha de empaque: se fijará al confirmar la generación real de etiquetas.")
-        st.write("Fecha de vencimiento: empaque + 30 días calendario (pendiente validación sanitaria).")
-    st.markdown("#### Buscar un pedido en Supabase")
-    numero_busqueda = st.text_input("Número de pedido guardado (ej. MC-2026-000001)", key="numero_busqueda")
-    if st.button("Consultar pedido guardado"):
-        if not numero_busqueda.strip():
-            st.warning("Ingresa el número del pedido.")
-        else:
-            try:
-                cabecera, lineas_guardadas = consultar_pedido_por_numero(numero_busqueda)
-                if cabecera:
-                    st.session_state.pedido_consultado = cabecera
-                    st.session_state.lineas_consultadas = lineas_guardadas
-                    st.success(f"Pedido {cabecera['numero_pedido']} encontrado. Estado: {cabecera['estado']}.")
-                else:
-                    st.session_state.pop("pedido_consultado", None)
-                    st.session_state.pop("lineas_consultadas", None)
-                    st.warning("No se encontró ese número en Supabase.")
-            except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as exc:
-                st.error(f"No se pudo consultar Supabase: {exc}")
-    if st.session_state.get("pedido_consultado"):
-        st.caption("Pedido recuperado de la base de datos. Puedes revisar sus productos y generar sus etiquetas.")
-    todos_los_pedidos = st.session_state.pedidos
-    numeros = list(dict.fromkeys(p.get("Numero pedido", "SIN NÚMERO") for p in todos_los_pedidos))
-    numero_seleccionado = st.selectbox("Selecciona el pedido para revisar, imprimir o eliminar", numeros) if numeros else None
-    pedidos = [p for p in todos_los_pedidos if p.get("Numero pedido", "SIN NÚMERO") == numero_seleccionado] if numero_seleccionado else []
-    if st.session_state.get("pedido_consultado"):
-        pedidos = st.session_state.get("lineas_consultadas", [])
-        numero_seleccionado = st.session_state["pedido_consultado"]["numero_pedido"]
-    if numero_seleccionado and not st.session_state.get("pedido_consultado"):
-        with st.expander("Eliminar pedido", expanded=False):
-            st.warning("Solo se quita de esta vista. El pedido real permanece guardado en Supabase.")
-            confirmar_borrado = st.checkbox("Confirmo que deseo eliminar este pedido", key="confirmar_borrado")
-            if st.button("Quitar de esta vista", disabled=not confirmar_borrado):
-                st.session_state.pedidos = [p for p in st.session_state.pedidos if p.get("Numero pedido", "SIN NÚMERO") != numero_seleccionado]
-                st.rerun()
-    municipios_con_pedido = {p["Municipio"] for p in pedidos}
-    st.metric("Municipios con cantidades positivas", len(municipios_con_pedido))
-    st.metric("Bolsas / etiquetas previstas", sum(len(p["Bolsas"]) for p in pedidos))
-    st.metric("Kilos solicitados", f"{sum(Decimal(p['Kilos']) for p in pedidos):.3f}")
-    if pedidos:
-        st.dataframe([{
-            "Municipio": p["Municipio"], "Cliente": p["Cliente"],
-            "Producto": p["Producto"], "Kilos": p["Kilos"],
-            "Regla": p["Empaque"], "Etiquetas": len(p["Bolsas"]),
-            "Pesos de bolsas (g)": ", ".join(map(str, p["Bolsas"])),
-        } for p in pedidos], use_container_width=True, hide_index=True)
-    else:
-        st.info("Todavía no hay pedidos registrados en esta sesión.")
-    if pedidos:
-        st.markdown("#### Seleccionar etiquetas específicas")
-        opciones_etiquetas = []
-        for i, linea in enumerate(pedidos):
-            for j, peso in enumerate(linea["Bolsas"]):
-                opciones_etiquetas.append((i, j, f'{linea["Cliente"]} | {linea["Producto"]} | Bolsa {j+1}/{len(linea["Bolsas"])} | {peso} g'))
-        claves = [f"{i}:{j}" for i,j,_ in opciones_etiquetas]
-        titulos = {f"{i}:{j}": titulo for i,j,titulo in opciones_etiquetas}
-        modo_impresion = st.radio("Qué etiquetas generar", ["Todas las etiquetas del pedido", "Solo las etiquetas seleccionadas"], horizontal=True)
-        if modo_impresion == "Solo las etiquetas seleccionadas":
-            elegidas = st.multiselect("Selecciona las bolsas que necesitas reimprimir", claves, format_func=lambda k: titulos[k])
-            etiquetas_para_pdf = []
-            for i,j,_ in opciones_etiquetas:
-                if f"{i}:{j}" in elegidas:
-                    copia = dict(pedidos[i])
-                    copia["Bolsas"] = [pedidos[i]["Bolsas"][j]]
-                    etiquetas_para_pdf.append(copia)
-        else:
-            etiquetas_para_pdf = pedidos
-        if st.session_state.get("pedido_consultado"):
-            with st.expander("Corregir cantidades del pedido guardado", expanded=False):
-                st.warning("Las correcciones cambian el pedido en Supabase. Revisa los pesos antes de confirmar. No modifica el historial de impresiones.")
-                for indice, linea in enumerate(pedidos):
-                    if "Detalle ID" not in linea:
-                        continue
-                    with st.form(f"corregir_{linea['Detalle ID']}"):
-                        st.write(f'{linea["Cliente"]} — {linea["Producto"]}')
-                        nuevo_peso = st.text_input("Cantidad total en kg", value=linea["Kilos"], key=f'editar_{linea["Detalle ID"]}')
-                        confirmar = st.checkbox("Confirmo esta corrección", key=f'confirmar_{linea["Detalle ID"]}')
-                        if st.form_submit_button("Guardar corrección"):
-                            if not confirmar:
-                                st.error("Confirma la corrección antes de guardar.")
-                            else:
-                                try:
-                                    gramos_nuevos = convertir_a_gramos(nuevo_peso)
-                                    api_supabase("detalles_pedido", "PATCH", {"gramos": gramos_nuevos}, {"id": "eq."+str(linea["Detalle ID"])})
-                                    cabecera, nuevas_lineas = consultar_pedido_por_numero(st.session_state["pedido_consultado"]["numero_pedido"])
-                                    st.session_state.lineas_consultadas = nuevas_lineas
-                                    st.success("Cantidad actualizada en Supabase. Se recalcularon las bolsas.")
-                                    st.rerun()
-                                except (HTTPError, URLError, ValueError, KeyError, TimeoutError) as exc:
-                                    st.error(f"No se pudo guardar la corrección: {exc}")
-    else:
-        etiquetas_para_pdf = []
-    st.divider()
-    st.subheader("Imprimir etiquetas PDF - 10 x 10 cm")
-    st.caption("Plantilla con logo y cuadrícula del diseño aprobado. Una página de 10 x 10 cm por bolsa. Confirmar vigencia sanitaria del código INVIMA, conservación y vencimiento antes de uso comercial.")
-    with st.expander("Datos de las etiquetas", expanded=True):
-        numero_preview = st.text_input("Número del pedido", value=numero_seleccionado or "", disabled=True)
-        nit_preview = st.text_input("NIT del municipio (opcional)")
-        st.text_input("Procesado y empacado por (predeterminado)", value=EMPACADOR, disabled=True)
-        direccion_preview = st.text_input("Dirección de procesado y empacado (predeterminada)", value=DIRECCION, disabled=True)
-        conservacion_preview = st.text_input("Condiciones de conservación (predeterminadas)", value="Mantener refrigerado entre 0 °C y 4 °C", disabled=True)
-        instrucciones_preview = st.text_input("Instrucciones de uso (predeterminadas)", value=INSTRUCCIONES, disabled=True)
-    if etiquetas_para_pdf:
-        try:
-            pdf = pdf_etiquetas_diseno(
-                etiquetas_para_pdf, numero_pedido=numero_preview, lote=lote,
-                fecha_beneficio=fecha_beneficio, nit=nit_preview,
-                direccion=direccion_preview, conservacion=conservacion_preview,
-                instrucciones=instrucciones_preview)
-            st.download_button(
-                "Descargar etiquetas en PDF (10 x 10 cm)",
-                data=pdf,
-                file_name="maxicarnes_etiquetas_100x100.pdf",
-                mime="application/pdf",
-                type="primary")
-            st.info("Abre el PDF en el computador conectado a la impresora SAT TT448-2 USE. Selecciona papel 100 x 100 mm, escala 100 % o tamaño real, sin ajustar a página. Imprime primero una etiqueta de prueba.")
-        except Exception as exc:
-            st.error(f"No se pudo generar el archivo: {exc}")
-    else:
-        st.info("Selecciona al menos una etiqueta o consulta un pedido para generar el PDF.")
-    st.warning("Pendiente: edición, anulación, historial de impresiones y control de acceso administrativo. No compartas aún esta vista con clientes.")
 
-with tab_bandeja:
-    st.subheader("Pedidos recibidos de todos los municipios")
-    st.caption("Información consultada directamente desde Supabase, no desde esta sesión. El estado impreso solo cambia cuando se confirma una impresión; descargar un PDF no equivale a imprimir.")
-    if st.button("Actualizar pedidos recibidos", type="primary"):
-        st.rerun()
+def datos_etiqueta_guardados(numero):
+    encontrados = api_supabase("datos_etiqueta_pedido", parametros={
+        "select":"numero_pedido,fecha_beneficio,lote,nit",
+        "numero_pedido":"eq."+numero,"limit":"1"})
+    return encontrados[0] if encontrados else {}
+
+
+def guardar_datos_etiqueta(numero, fecha, lote, nit):
+    payload = {"numero_pedido":numero,"fecha_beneficio":fecha.isoformat(),
+               "lote":lote.strip(),"nit":nit.strip()}
+    if datos_etiqueta_guardados(numero):
+        api_supabase("datos_etiqueta_pedido","PATCH",payload,{"numero_pedido":"eq."+numero})
+    else:
+        api_supabase("datos_etiqueta_pedido","POST",payload)
+
+
+def generar_pdf_pedidos(numeros):
+    from pypdf import PdfReader, PdfWriter
+    writer = PdfWriter()
+    for numero in numeros:
+        meta = datos_etiqueta_guardados(numero)
+        if not meta.get("fecha_beneficio") or not meta.get("lote"):
+            raise ValueError("Faltan fecha de beneficio y lote en "+numero)
+        cabecera, lineas = consultar_pedido_por_numero(numero)
+        if not cabecera or not lineas:
+            raise ValueError("No hay productos para "+numero)
+        archivo = pdf_etiquetas_diseno(
+            lineas, numero_pedido=numero, lote=meta["lote"],
+            fecha_beneficio=date.fromisoformat(meta["fecha_beneficio"]),
+            nit=meta.get("nit") or "",direccion=DIRECCION,
+            conservacion="Mantener refrigerado entre 0 °C y 4 °C",
+            instrucciones="Producto que requiere cocción para su consumo")
+        for pagina in PdfReader(BytesIO(archivo)).pages:
+            writer.add_page(pagina)
+    salida = BytesIO()
+    writer.write(salida)
+    return salida.getvalue(),len(writer.pages)
+
+
+with tab_revision:
+    st.subheader("Pedidos pendientes de generar e imprimir etiquetas")
+    st.caption("Selecciona únicamente los pedidos que deseas procesar. Los nuevos no se seleccionan automáticamente.")
     try:
         registros = listar_pedidos_guardados()
-        pendientes = [p for p in registros if p["Estado"] != "impreso"]
-        impresos = [p for p in registros if p["Estado"] == "impreso"]
-        a,b,c = st.columns(3)
-        a.metric("Pedidos recibidos", len(registros))
-        b.metric("Pendientes / sin confirmar", len(pendientes))
-        c.metric("Marcados como impresos", len(impresos))
-        filtro = st.selectbox("Mostrar pedidos", ["Todos","Pendientes / sin confirmar","Impresos"])
-        visibles = registros if filtro == "Todos" else (impresos if filtro == "Impresos" else pendientes)
-        st.markdown("#### PDF conjunto de pedidos")
-        st.caption("Busca y selecciona únicamente los pedidos que deseas imprimir. Los pedidos nuevos no se incluyen automáticamente.")
-        opciones_masivas = {p["Número"]:p for p in registros if p["Estado"] != "anulado"}
-        seleccion_masiva = st.multiselect(
-            "Pedidos para incluir en el PDF",list(opciones_masivas),
-            default=[],
-            format_func=lambda n:opciones_masivas[n]["Municipio"]+" — "+n,
-            key="pedidos_pdf_masivo")
-        if seleccion_masiva:
-            st.write(f"**{len(seleccion_masiva)} pedido(s) seleccionado(s)**")
-            with st.expander("Ingresar fecha de beneficio y lote para los pedidos seleccionados",expanded=True):
-                st.caption("Completa estos datos una sola vez para los pedidos que aún no los tienen. Los datos existentes se conservarán.")
-                with st.form("datos_masivos_etiquetas"):
-                    fecha_comun = st.date_input("Fecha de beneficio",value=date.today(),format="DD/MM/YYYY")
-                    lote_comun = st.text_input("Lote (obligatorio)")
-                    nit_comun = st.text_input("NIT del municipio (opcional)")
-                    confirmar_comunes = st.checkbox("Confirmo que la fecha y el lote son iguales para los pedidos sin datos guardados")
-                    guardar_comunes = st.form_submit_button("Guardar datos faltantes de los pedidos seleccionados")
-                if guardar_comunes:
-                    if not lote_comun.strip() or not confirmar_comunes:
-                        st.error("Escribe el lote y confirma que estos datos corresponden a los pedidos seleccionados.")
-                    else:
-                        guardados_ok = []
-                        try:
-                            for numero in seleccion_masiva:
-                                existentes = api_supabase("datos_etiqueta_pedido",parametros={
-                                    "select":"numero_pedido,fecha_beneficio,lote,nit",
-                                    "numero_pedido":"eq."+numero,"limit":"1"})
-                                if existentes and existentes[0].get("fecha_beneficio") and existentes[0].get("lote"):
-                                    continue
-                                payload = {"numero_pedido":numero,"fecha_beneficio":fecha_comun.isoformat(),
-                                           "lote":lote_comun.strip(),"nit":nit_comun.strip()}
-                                if existentes:
-                                    api_supabase("datos_etiqueta_pedido","PATCH",payload,{"numero_pedido":"eq."+numero})
-                                else:
-                                    api_supabase("datos_etiqueta_pedido","POST",payload)
-                                guardados_ok.append(numero)
-                            st.success(f"Datos guardados en {len(guardados_ok)} pedidos. Ya puedes preparar el PDF conjunto.")
-                        except Exception as exc:
-                            st.error(f"No se pudieron completar todos los datos: {exc}. Se guardaron {len(guardados_ok)} pedidos; revisa antes de reintentar.")
-        if st.button("Preparar PDF de todos los seleccionados",type="primary",disabled=not seleccion_masiva):
-            try:
-                from pypdf import PdfReader, PdfWriter
-                writer = PdfWriter()
-                faltantes = []
-                agregados = []
-                for numero_masivo in seleccion_masiva:
-                    datos = api_supabase("datos_etiqueta_pedido",parametros={
-                        "select":"fecha_beneficio,lote,nit",
-                        "numero_pedido":"eq."+numero_masivo,"limit":"1"})
-                    if not datos or not datos[0].get("fecha_beneficio") or not datos[0].get("lote"):
-                        faltantes.append(numero_masivo)
-                        continue
-                    cabecera_m, lineas_m = consultar_pedido_por_numero(numero_masivo)
-                    if not cabecera_m or not lineas_m:
-                        faltantes.append(numero_masivo)
-                        continue
-                    meta = datos[0]
-                    pdf_uno = pdf_etiquetas_diseno(
-                        lineas_m,numero_pedido=numero_masivo,
-                        lote=meta["lote"],fecha_beneficio=date.fromisoformat(meta["fecha_beneficio"]),
-                        nit=meta.get("nit") or "",
-                        conservacion="Mantener refrigerado entre 0 °C y 4 °C",
-                        instrucciones="Producto que requiere cocción para su consumo",direccion=DIRECCION)
-                    for pagina in PdfReader(BytesIO(pdf_uno)).pages:
-                        writer.add_page(pagina)
-                    agregados.append(numero_masivo)
-                if faltantes:
-                    st.session_state.pop("pdf_masivo",None)
-                    st.error("No se generó el PDF porque faltan datos de beneficio/lote o detalles en: "+", ".join(faltantes)+". Abre esos pedidos y prepara sus etiquetas primero.")
-                elif agregados:
-                    salida = BytesIO()
-                    writer.write(salida)
-                    st.session_state["pdf_masivo"] = salida.getvalue()
-                    st.session_state["pdf_masivo_pedidos"] = tuple(agregados)
-                    st.success(f"PDF preparado: {len(agregados)} pedidos, {len(writer.pages)} etiquetas.")
-            except Exception as exc:
-                st.error(f"No se pudo preparar el PDF conjunto: {exc}")
-        if st.session_state.get("pdf_masivo") and tuple(seleccion_masiva)==st.session_state.get("pdf_masivo_pedidos"):
-            st.download_button("Descargar un solo PDF para imprimir",data=st.session_state["pdf_masivo"],
-                               file_name="MaxiCarnes_etiquetas_todos_los_pedidos.pdf",
-                               mime="application/pdf",type="primary")
-            st.caption("Descargar no imprime automáticamente ni cambia el estado de los pedidos.")
-        if visibles:
-            st.dataframe(visibles, hide_index=True, use_container_width=True)
-            opciones = [p["Número"] for p in visibles]
-            elegido = st.selectbox("Pedido que deseas abrir", opciones, key="pedido_bandeja")
-            if st.button("Abrir pedido y ver productos", type="primary", key="abrir_pedido_bandeja"):
-                try:
-                    cabecera, lineas = consultar_pedido_por_numero(elegido)
-                    if cabecera:
-                        st.session_state["bandeja_abierto"] = cabecera
-                        st.session_state["bandeja_lineas"] = lineas
-                    else:
-                        st.error("El pedido no se encontró en Supabase.")
-                except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as exc:
-                    st.error(f"No se pudo abrir el pedido: {exc}")
-            abierto = st.session_state.get("bandeja_abierto")
-            if abierto:
-                lineas = st.session_state.get("bandeja_lineas", [])
-                st.markdown(f'### Pedido {abierto["numero_pedido"]}')
-                st.write(f'**Fecha de creación:** {abierto.get("enviado_en") or "No registrada"}  |  **Estado:** {abierto.get("estado") or "Sin estado"}')
-                if lineas:
-                    st.dataframe([{
-                        "Municipio":p["Municipio"], "Cliente":p["Cliente"],
-                        "Producto":p["Producto"], "Kilos":p["Kilos"],
-                        "Bolsas":len(p["Bolsas"]),
-                        "Pesos (g)":", ".join(map(str,p["Bolsas"]))
-                    } for p in lineas], use_container_width=True, hide_index=True)
-                    st.metric("Etiquetas previstas",sum(len(p["Bolsas"]) for p in lineas))
-                    st.markdown("#### Corregir una cantidad")
-                    st.caption("Las correcciones se guardan en Supabase. Verifica la cantidad antes de confirmar.")
-                    detalle_opciones = {str(p["Detalle ID"]):p for p in lineas if "Detalle ID" in p}
-                    if detalle_opciones:
-                        detalle_id = st.selectbox(
-                            "Cliente y producto a modificar", list(detalle_opciones),
-                            format_func=lambda k: detalle_opciones[k]["Cliente"]+" — "+detalle_opciones[k]["Producto"],
-                            key="detalle_editar_bandeja")
-                        linea_editar = detalle_opciones[detalle_id]
-                        with st.form("editar_cantidad_bandeja"):
-                            kilos_nuevos = st.text_input("Cantidad en kilos", value=linea_editar["Kilos"])
-                            confirmar_cambio = st.checkbox("Confirmo la corrección de esta cantidad")
-                            if st.form_submit_button("Guardar cantidad corregida"):
-                                if not confirmar_cambio:
-                                    st.error("Debes confirmar la corrección.")
-                                else:
-                                    try:
-                                        gramos_nuevos = convertir_a_gramos(kilos_nuevos)
-                                        if gramos_nuevos <= 0:
-                                            raise ValueError("La cantidad debe ser mayor que cero.")
-                                        api_supabase("detalles_pedido", "PATCH", {"gramos":gramos_nuevos},
-                                                     {"id":"eq."+detalle_id})
-                                        _, actualizadas = consultar_pedido_por_numero(abierto["numero_pedido"])
-                                        st.session_state["bandeja_lineas"] = actualizadas
-                                        st.success("Cantidad actualizada en Supabase.")
-                                        st.rerun()
-                                    except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as exc:
-                                        st.error(f"No se pudo guardar la corrección: {exc}")
-                    st.markdown("#### Imprimir o reimprimir etiquetas")
-                    opciones_bolsas = {}
-                    for i,p in enumerate(lineas):
-                        for j,peso in enumerate(p["Bolsas"]):
-                            clave = f"{i}:{j}"
-                            opciones_bolsas[clave] = f'{p["Cliente"]} — {p["Producto"]} — Bolsa {j+1} de {len(p["Bolsas"])} — {peso} g'
-                    tipo = st.radio("Qué deseas imprimir", ["Pedido completo", "Solo etiquetas seleccionadas"],
-                                    key="tipo_impresion_bandeja", horizontal=True)
-                    elegidas = list(opciones_bolsas)
-                    if tipo == "Solo etiquetas seleccionadas":
-                        elegidas = st.multiselect("Elige las etiquetas",list(opciones_bolsas),
-                                                  format_func=lambda k: opciones_bolsas[k],
-                                                  key="etiquetas_bandeja")
-                    seleccionadas = []
-                    for clave in elegidas:
-                        i,j = (int(x) for x in clave.split(":"))
-                        linea = dict(lineas[i])
-                        linea["Bolsas"] = [lineas[i]["Bolsas"][j]]
-                        seleccionadas.append(linea)
-                    # Recuperar los datos de la etiqueta por pedido, incluso en otra sesión.
-                    numero_actual = abierto["numero_pedido"]
-                    try:
-                        guardados = api_supabase("datos_etiqueta_pedido", parametros={
-                            "select":"numero_pedido,fecha_beneficio,lote,nit",
-                            "numero_pedido":"eq."+numero_actual,"limit":"1"})
-                    except HTTPError as exc:
-                        if exc.code == 404:
+        pendientes = [p for p in registros if p["Estado"] not in ("impreso","anulado")]
+        st.metric("Pedidos pendientes",len(pendientes))
+        if pendientes:
+            st.dataframe(pendientes,hide_index=True,use_container_width=True)
+            mapa = {p["Número"]:p for p in pendientes}
+            seleccion = st.multiselect(
+                "Buscar y seleccionar pedidos pendientes",list(mapa),
+                format_func=lambda n:mapa[n]["Municipio"]+" — "+n,
+                key="pendientes_seleccion",placeholder="Selecciona uno o varios pedidos")
+            if seleccion:
+                st.write("**Pedidos elegidos:** "+str(len(seleccion)))
+                st.caption("Si todos comparten fecha y lote, puedes guardar esos datos en conjunto. Si son diferentes, usa la edición individual.")
+                with st.expander("Asignar fecha, lote y NIT a los seleccionados",expanded=True):
+                    with st.form("metadatos_pendientes"):
+                        fecha_comun = st.date_input("Fecha de beneficio",value=date.today(),format="DD/MM/YYYY")
+                        lote_comun = st.text_input("Lote (obligatorio)")
+                        nit_comun = st.text_input("NIT (opcional)")
+                        confirmar = st.checkbox("Confirmo que estos mismos datos corresponden a todos los pedidos seleccionados")
+                        guardar = st.form_submit_button("Guardar fecha, lote y NIT")
+                    if guardar:
+                        if not lote_comun.strip() or not confirmar:
+                            st.error("Completa el lote y confirma que los datos aplican a todos los seleccionados.")
+                        else:
                             guardados = []
-                            st.warning("Falta crear la tabla de datos de etiquetas en Supabase para conservar estos campos entre sesiones.")
-                        else:
-                            raise
-                    datos_previos = guardados[0] if guardados else {}
-                    if seleccionadas:
-                        st.markdown("##### Información de las etiquetas seleccionadas")
-                        st.dataframe([{"Municipio":p["Municipio"],"Cliente":p["Cliente"],"Producto":p["Producto"],"Peso (g)":p["Bolsas"][0]} for p in seleccionadas], hide_index=True, use_container_width=True)
-                        st.caption("Solo se muestran las etiquetas elegidas. Los cambios de peso de abajo se aplican al PDF, no al pedido original.")
-                    with st.form("datos_pdf_bandeja"):
-                        fecha_anterior = date.fromisoformat(datos_previos["fecha_beneficio"]) if datos_previos.get("fecha_beneficio") else None
-                        fecha_b = st.date_input("Fecha de beneficio",value=fecha_anterior,format="DD/MM/YYYY")
-                        lote_b = st.text_input("Lote (obligatorio)",value=datos_previos.get("lote") or "")
-                        nit_b = st.text_input("NIT del municipio (opcional)",value=datos_previos.get("nit") or "")
-                        pesos_editados = []
-                        for idx, etiqueta in enumerate(seleccionadas):
-                            st.markdown("**Etiqueta "+str(idx+1)+": "+etiqueta["Cliente"]+" — "+etiqueta["Producto"]+"**")
-                            peso_editado = st.number_input("Peso neto (g), etiqueta "+str(idx+1), min_value=1, value=int(etiqueta["Bolsas"][0]), step=1, key="peso_etiqueta_"+numero_actual+"_"+str(idx))
-                            pesos_editados.append(int(peso_editado))
-                        imprimir_pdf = st.form_submit_button("Preparar etiquetas seleccionadas")
-                    if imprimir_pdf:
-                        if not seleccionadas:
-                            st.error("Selecciona al menos una etiqueta.")
-                        elif not fecha_b or not lote_b.strip():
-                            st.error("Completa la fecha de beneficio y el lote. El NIT es opcional.")
-                        else:
                             try:
-                                payload = {"numero_pedido":numero_actual,
-                                           "fecha_beneficio":fecha_b.isoformat(),
-                                           "lote":lote_b.strip(),"nit":nit_b.strip()}
-                                if guardados:
-                                    api_supabase("datos_etiqueta_pedido","PATCH",payload,
-                                                 {"numero_pedido":"eq."+numero_actual})
-                                else:
-                                    api_supabase("datos_etiqueta_pedido","POST",payload)
-                                etiquetas_corregidas = [dict(etiqueta, Bolsas=[peso]) for etiqueta, peso in zip(seleccionadas, pesos_editados)]
-                                st.session_state["pdf_bandeja"] = pdf_etiquetas_diseno(
-                                    etiquetas_corregidas, numero_pedido=numero_actual,
-                                    lote=lote_b, fecha_beneficio=fecha_b, nit=nit_b,
-                                    conservacion="Mantener refrigerado entre 0 °C y 4 °C",
-                                    instrucciones="Producto que requiere cocción para su consumo",
-                                    direccion=DIRECCION)
-                                st.session_state["pdf_bandeja_numero"] = numero_actual
-                                st.success("Datos de la etiqueta guardados en Supabase para futuras modificaciones y reimpresiones.")
-                            except (HTTPError, URLError, ValueError, KeyError, TimeoutError) as exc:
-                                st.error(f"No se pudieron guardar los datos de la etiqueta: {exc}")
-                    if (st.session_state.get("pdf_bandeja") and
-                        st.session_state.get("pdf_bandeja_numero")==abierto["numero_pedido"]):
-                        st.download_button("Descargar PDF de las etiquetas elegidas",
-                                           data=st.session_state["pdf_bandeja"],
-                                           file_name=abierto["numero_pedido"]+"_etiquetas.pdf",
-                                           mime="application/pdf",type="primary")
-                    st.caption("Descargar el PDF no marca el pedido como impreso. El registro de impresiones está pendiente.")
-
-                else:
-                    st.warning("Este pedido existe, pero no contiene productos guardados.")
-
+                                for numero in seleccion:
+                                    guardar_datos_etiqueta(numero,fecha_comun,lote_comun,nit_comun)
+                                    guardados.append(numero)
+                                st.success(f"Datos guardados en {len(guardados)} pedidos.")
+                            except Exception as exc:
+                                st.error(f"Error: {exc}. Se guardaron {len(guardados)} pedidos; revisa antes de repetir.")
+                with st.expander("Editar fecha, lote o NIT de un pedido específico"):
+                    numero_individual = st.selectbox("Pedido",seleccion,key="pendiente_individual")
+                    datos = datos_etiqueta_guardados(numero_individual)
+                    with st.form("datos_individual_pendiente_"+numero_individual):
+                        fecha_individual = st.date_input(
+                            "Fecha de beneficio",value=date.fromisoformat(datos["fecha_beneficio"])
+                            if datos.get("fecha_beneficio") else date.today(),format="DD/MM/YYYY")
+                        lote_individual = st.text_input("Lote",value=datos.get("lote") or "")
+                        nit_individual = st.text_input("NIT (opcional)",value=datos.get("nit") or "")
+                        if st.form_submit_button("Guardar datos de este pedido"):
+                            if lote_individual.strip():
+                                guardar_datos_etiqueta(numero_individual,fecha_individual,lote_individual,nit_individual)
+                                st.success("Datos guardados en Supabase.")
+                            else:
+                                st.error("El lote es obligatorio.")
+                if st.button("Preparar PDF de los pedidos seleccionados",type="primary",key="generar_pendientes"):
+                    try:
+                        pdf,paginas = generar_pdf_pedidos(seleccion)
+                        st.session_state["pdf_pendientes"] = pdf
+                        st.session_state["pdf_pendientes_numeros"] = tuple(seleccion)
+                        st.success(f"PDF listo: {paginas} etiquetas.")
+                    except Exception as exc:
+                        st.session_state.pop("pdf_pendientes",None)
+                        st.error(str(exc)+". Completa los datos faltantes antes de generar.")
+                if (st.session_state.get("pdf_pendientes") and
+                    st.session_state.get("pdf_pendientes_numeros")==tuple(seleccion)):
+                    st.download_button("Descargar PDF conjunto de etiquetas",st.session_state["pdf_pendientes"],
+                                       file_name="MaxiCarnes_pedidos_pendientes.pdf",mime="application/pdf",type="primary")
+                    st.warning("Después de imprimir físicamente, confirma cuáles pedidos se imprimieron correctamente.")
+                    confirmar_impresion = st.checkbox("Confirmo que todas las etiquetas de estos pedidos ya fueron impresas",
+                                                       key="confirmacion_impresion_pendientes")
+                    if st.button("Marcar pedidos como impresos y pasar al módulo 4",
+                                 disabled=not confirmar_impresion,key="marcar_impresos"):
+                        try:
+                            for numero in seleccion:
+                                api_supabase("pedidos","PATCH",{"estado":"impreso","impreso_en":date.today().isoformat()},
+                                             {"numero_pedido":"eq."+numero})
+                            st.session_state.pop("pdf_pendientes",None)
+                            st.success("Pedidos marcados como impresos. Ya aparecerán en el módulo 4.")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"No se pudo confirmar toda la impresión: {exc}. Revisa los estados antes de repetir.")
         else:
-            st.info("No hay pedidos en esta categoría.")
-        st.warning("Esta bandeja es una vista inicial. Antes de compartir la aplicación con clientes debemos proteger el acceso a la información administrativa.")
-    except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as exc:
-        st.error(f"No se pudieron cargar los pedidos de Supabase: {exc}")
+            st.success("No hay pedidos pendientes.")
+    except Exception as exc:
+        st.error(f"No se pudieron consultar los pendientes: {exc}")
+
+
+with tab_bandeja:
+    st.subheader("Pedidos impresos e historial")
+    st.caption("Aquí puedes consultar pedidos ya confirmados como impresos, corregir cantidades y reimprimir etiquetas.")
+    try:
+        registros = listar_pedidos_guardados()
+        impresos = [p for p in registros if p["Estado"]=="impreso"]
+        st.metric("Pedidos impresos",len(impresos))
+        if impresos:
+            st.dataframe(impresos,hide_index=True,use_container_width=True)
+            mapa_impresos = {p["Número"]:p for p in impresos}
+            numero = st.selectbox("Buscar pedido impreso",list(mapa_impresos),
+                                  format_func=lambda n:mapa_impresos[n]["Municipio"]+" — "+n,
+                                  key="numero_impreso")
+            cabecera, lineas = consultar_pedido_por_numero(numero)
+            if lineas:
+                st.dataframe([{"Cliente":p["Cliente"],"Producto":p["Producto"],
+                               "Kilos":p["Kilos"],"Bolsas":len(p["Bolsas"])}
+                              for p in lineas],hide_index=True,use_container_width=True)
+                with st.expander("Modificar cantidad de un producto"):
+                    detalles = {str(p["Detalle ID"]):p for p in lineas}
+                    detalle = st.selectbox("Cliente y producto",list(detalles),
+                                           format_func=lambda d:detalles[d]["Cliente"]+" — "+detalles[d]["Producto"])
+                    with st.form("corregir_impreso_"+numero):
+                        kilos = st.text_input("Cantidad total en kg",value=detalles[detalle]["Kilos"])
+                        confirma = st.checkbox("Confirmo el cambio del pedido ya impreso")
+                        if st.form_submit_button("Guardar corrección"):
+                            if not confirma:
+                                st.error("Confirma la corrección.")
+                            else:
+                                try:
+                                    gramos = convertir_a_gramos(kilos)
+                                    if gramos <= 0:
+                                        raise ValueError("El peso debe ser positivo.")
+                                    api_supabase("detalles_pedido","PATCH",{"gramos":gramos},{"id":"eq."+detalle})
+                                    st.success("Cantidad actualizada en Supabase.")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(str(exc))
+                opciones_bolsas = {}
+                for i,p in enumerate(lineas):
+                    for j,peso in enumerate(p["Bolsas"]):
+                        opciones_bolsas[f"{i}:{j}"] = f'{p["Cliente"]} — {p["Producto"]} — Bolsa {j+1} — {peso} g'
+                modo = st.radio("Reimprimir",["Todas las etiquetas","Solo etiquetas específicas"],horizontal=True)
+                elegidas = list(opciones_bolsas) if modo=="Todas las etiquetas" else st.multiselect(
+                    "Seleccionar etiquetas",list(opciones_bolsas),format_func=lambda k:opciones_bolsas[k])
+                seleccionadas = []
+                for clave in elegidas:
+                    i,j = (int(x) for x in clave.split(":"))
+                    copia = dict(lineas[i])
+                    copia["Bolsas"] = [lineas[i]["Bolsas"][j]]
+                    seleccionadas.append(copia)
+                datos = datos_etiqueta_guardados(numero)
+                with st.form("reimprimir_"+numero):
+                    fecha = st.date_input("Fecha de beneficio",value=date.fromisoformat(datos["fecha_beneficio"])
+                                          if datos.get("fecha_beneficio") else date.today(),format="DD/MM/YYYY")
+                    lote = st.text_input("Lote (obligatorio)",value=datos.get("lote") or "")
+                    nit = st.text_input("NIT (opcional)",value=datos.get("nit") or "")
+                    pesos = []
+                    for i,etiqueta in enumerate(seleccionadas):
+                        st.caption(f'{etiqueta["Cliente"]} — {etiqueta["Producto"]}')
+                        pesos.append(st.number_input("Peso de etiqueta "+str(i+1)+" (g)",
+                                                     min_value=1,value=int(etiqueta["Bolsas"][0]),
+                                                     key="peso_impreso_"+numero+"_"+str(i)))
+                    generar = st.form_submit_button("Preparar PDF de reimpresión")
+                if generar:
+                    if not lote.strip() or not seleccionadas:
+                        st.error("Indica el lote y selecciona al menos una etiqueta.")
+                    else:
+                        try:
+                            guardar_datos_etiqueta(numero,fecha,lote,nit)
+                            editadas = [dict(p,Bolsas=[peso]) for p,peso in zip(seleccionadas,pesos)]
+                            st.session_state["pdf_reimpreso"] = pdf_etiquetas_diseno(
+                                editadas,numero_pedido=numero,lote=lote,fecha_beneficio=fecha,
+                                nit=nit,conservacion="Mantener refrigerado entre 0 °C y 4 °C",
+                                instrucciones="Producto que requiere cocción para su consumo",direccion=DIRECCION)
+                            st.session_state["pdf_reimpreso_numero"] = numero
+                            st.success("PDF preparado. Las correcciones de peso de una etiqueta solo afectan esta reimpresión.")
+                        except Exception as exc:
+                            st.error(f"No se pudo generar el PDF: {exc}")
+                if st.session_state.get("pdf_reimpreso") and st.session_state.get("pdf_reimpreso_numero")==numero:
+                    st.download_button("Descargar PDF para reimprimir",st.session_state["pdf_reimpreso"],
+                                       file_name=numero+"_reimpresion.pdf",mime="application/pdf",type="primary")
+        else:
+            st.info("Todavía no hay pedidos confirmados como impresos.")
+    except Exception as exc:
+        st.error(f"No se pudo consultar el historial: {exc}")

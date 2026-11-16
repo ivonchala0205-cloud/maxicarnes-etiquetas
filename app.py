@@ -547,37 +547,19 @@ def listar_pedidos_guardados():
 
 
 def datos_etiqueta_guardados(numero):
-    """Lee metadatos incluso si la migración de fecha_empaque está pendiente."""
-    parametros = {"numero_pedido":"eq."+numero,"limit":"1"}
-    try:
-        encontrados = api_supabase("datos_etiqueta_pedido",parametros={
-            **parametros,"select":"numero_pedido,fecha_beneficio,fecha_empaque,lote,nit"})
-    except ValueError as exc:
-        if "fecha_empaque" not in str(exc) or "42703" not in str(exc):
-            raise
-        encontrados = api_supabase("datos_etiqueta_pedido",parametros={
-            **parametros,"select":"numero_pedido,fecha_beneficio,lote,nit"})
-        if encontrados:
-            encontrados[0]["fecha_empaque"] = None
+    encontrados = api_supabase("datos_etiqueta_pedido", parametros={
+        "select":"numero_pedido,fecha_beneficio,lote,nit",
+        "numero_pedido":"eq."+numero,"limit":"1"})
     return encontrados[0] if encontrados else {}
 
 
-def guardar_datos_etiqueta(numero, fecha, lote, nit, fecha_empaque):
+def guardar_datos_etiqueta(numero, fecha, lote, nit):
     payload = {"numero_pedido":numero,"fecha_beneficio":fecha.isoformat(),
-               "lote":lote.strip(),"nit":nit.strip(),"fecha_empaque":fecha_empaque.isoformat()}
-    existentes = datos_etiqueta_guardados(numero)
-    try:
-        if existentes:
-            api_supabase("datos_etiqueta_pedido","PATCH",payload,{"numero_pedido":"eq."+numero})
-        else:
-            api_supabase("datos_etiqueta_pedido","POST",payload)
-    except ValueError as exc:
-        if "fecha_empaque" in str(exc) and ("PGRST204" in str(exc) or "42703" in str(exc)):
-            raise ValueError(
-                "Falta la columna fecha_empaque en Supabase. Ejecuta el archivo "
-                "migracion_fecha_empaque.sql en el editor SQL; no se guardó este pedido."
-            ) from exc
-        raise
+               "lote":lote.strip(),"nit":nit.strip()}
+    if datos_etiqueta_guardados(numero):
+        api_supabase("datos_etiqueta_pedido","PATCH",payload,{"numero_pedido":"eq."+numero})
+    else:
+        api_supabase("datos_etiqueta_pedido","POST",payload)
 
 
 def generar_pdf_pedidos(numeros):
@@ -585,7 +567,7 @@ def generar_pdf_pedidos(numeros):
     writer = PdfWriter()
     for numero in numeros:
         meta = datos_etiqueta_guardados(numero)
-        if not meta.get("fecha_beneficio") or not meta.get("lote") or not meta.get("fecha_empaque"):
+        if not meta.get("fecha_beneficio") or not meta.get("lote"):
             raise ValueError("Faltan fecha de beneficio y lote en "+numero)
         cabecera, lineas = consultar_pedido_por_numero(numero)
         if not cabecera or not lineas:
@@ -593,7 +575,6 @@ def generar_pdf_pedidos(numeros):
         archivo = pdf_etiquetas_diseno(
             lineas, numero_pedido=numero, lote=meta["lote"],
             fecha_beneficio=date.fromisoformat(meta["fecha_beneficio"]),
-            fecha_empaque=date.fromisoformat(meta["fecha_empaque"]),
             nit=meta.get("nit") or "",direccion=DIRECCION,
             conservacion="Mantener refrigerado entre 0 °C y 4 °C",
             instrucciones="Producto que requiere cocción para su consumo")
@@ -624,7 +605,6 @@ with tab_revision:
                 with st.expander("Asignar fecha, lote y Fabricado para a los seleccionados",expanded=True):
                     with st.form("metadatos_pendientes"):
                         fecha_comun = st.date_input("Fecha de beneficio",value=date.today(),format="DD/MM/YYYY")
-                        empaque_comun = st.date_input("Fecha de empaque (fecha de generación de la etiqueta)",value=date.today(),format="DD/MM/YYYY")
                         lote_comun = st.text_input("Lote (obligatorio)")
                         nit_comun = st.text_input("Fabricado para (NIT opcional)")
                         confirmar = st.checkbox("Confirmo que estos mismos datos corresponden a todos los pedidos seleccionados")
@@ -636,7 +616,7 @@ with tab_revision:
                             guardados = []
                             try:
                                 for numero in seleccion:
-                                    guardar_datos_etiqueta(numero,fecha_comun,lote_comun,nit_comun,empaque_comun)
+                                    guardar_datos_etiqueta(numero,fecha_comun,lote_comun,nit_comun)
                                     guardados.append(numero)
                                 st.success(f"Datos guardados en {len(guardados)} pedidos.")
                             except Exception as exc:
@@ -648,12 +628,11 @@ with tab_revision:
                         fecha_individual = st.date_input(
                             "Fecha de beneficio",value=date.fromisoformat(datos["fecha_beneficio"])
                             if datos.get("fecha_beneficio") else date.today(),format="DD/MM/YYYY")
-                        empaque_individual = st.date_input("Fecha de empaque",value=date.fromisoformat(datos["fecha_empaque"]) if datos.get("fecha_empaque") else date.today(),format="DD/MM/YYYY")
                         lote_individual = st.text_input("Lote",value=datos.get("lote") or "")
                         nit_individual = st.text_input("Fabricado para (NIT opcional)",value=datos.get("nit") or "")
                         if st.form_submit_button("Guardar datos de este pedido"):
                             if lote_individual.strip():
-                                guardar_datos_etiqueta(numero_individual,fecha_individual,lote_individual,nit_individual,empaque_individual)
+                                guardar_datos_etiqueta(numero_individual,fecha_individual,lote_individual,nit_individual)
                                 st.success("Datos guardados en Supabase.")
                             else:
                                 st.error("El lote es obligatorio.")
@@ -761,7 +740,6 @@ with tab_bandeja:
                 with st.form("reimprimir_"+numero):
                     fecha = st.date_input("Fecha de beneficio",value=date.fromisoformat(datos["fecha_beneficio"])
                                           if datos.get("fecha_beneficio") else date.today(),format="DD/MM/YYYY")
-                    empaque = st.date_input("Fecha de empaque",value=date.fromisoformat(datos["fecha_empaque"]) if datos.get("fecha_empaque") else date.today(),format="DD/MM/YYYY")
                     lote = st.text_input("Lote (obligatorio)",value=datos.get("lote") or "")
                     nit = st.text_input("Fabricado para (NIT opcional)",value=datos.get("nit") or "")
                     pesos = []
@@ -776,10 +754,10 @@ with tab_bandeja:
                         st.error("Indica el lote y selecciona al menos una etiqueta.")
                     else:
                         try:
-                            guardar_datos_etiqueta(numero,fecha,lote,nit,empaque)
+                            guardar_datos_etiqueta(numero,fecha,lote,nit)
                             editadas = [dict(p,Bolsas=[peso]) for p,peso in zip(seleccionadas,pesos)]
                             st.session_state["pdf_reimpreso"] = pdf_etiquetas_diseno(
-                                editadas,numero_pedido=numero,lote=lote,fecha_beneficio=fecha,fecha_empaque=empaque,
+                                editadas,numero_pedido=numero,lote=lote,fecha_beneficio=fecha,
                                 nit=nit,conservacion="Mantener refrigerado entre 0 °C y 4 °C",
                                 instrucciones="Producto que requiere cocción para su consumo",direccion=DIRECCION)
                             st.session_state["pdf_reimpreso_numero"] = numero

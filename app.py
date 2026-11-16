@@ -157,8 +157,8 @@ with st.sidebar:
     st.subheader("Pedidos")
     st.info("Los pedidos del catálogo real se guardan en Supabase. Las altas de catálogo siguen siendo temporales.")
 
-tab_pedidos, tab_catalogo, tab_revision = st.tabs(
-    ["1. Formulario por municipio", "2. Municipios, clientes y productos", "3. Revisión semanal"]
+tab_pedidos, tab_catalogo, tab_revision, tab_bandeja = st.tabs(
+    ["1. Formulario por municipio", "2. Municipios, clientes y productos", "3. Revisión semanal", "4. Pedidos recibidos"]
 )
 
 with tab_catalogo:
@@ -406,6 +406,23 @@ def consultar_pedido_por_numero(numero):
     return cabecera, lineas
 
 
+def listar_pedidos_guardados():
+    """Consulta cabeceras recientes, independientemente de la sesión del navegador."""
+    registros = api_supabase("pedidos", parametros={
+        "select":"id,numero_pedido,municipio_id,estado,enviado_en,impreso_en",
+        "order":"enviado_en.desc","limit":"500"
+    })
+    municipios = api_supabase("municipios", parametros={"select":"id,nombre","limit":"1000"})
+    nombres = {m["id"]:m["nombre"] for m in municipios}
+    return [{
+        "Número":p.get("numero_pedido") or str(p["id"]),
+        "Municipio":nombres.get(p["municipio_id"],"No encontrado"),
+        "Fecha de creación":p.get("enviado_en",""),
+        "Estado":p.get("estado","enviado"),
+        "Fecha de impresión":p.get("impreso_en") or "Sin confirmar",
+    } for p in registros]
+
+
 with tab_revision:
     st.subheader("Consultar pedidos guardados")
     st.caption("Consulta pedidos por su número único. Los cambios y anulaciones de pedidos históricos todavía no están habilitados.")
@@ -534,3 +551,27 @@ with tab_revision:
     else:
         st.info("Selecciona al menos una etiqueta o consulta un pedido para generar el PDF.")
     st.warning("Pendiente: edición, anulación, historial de impresiones y control de acceso administrativo. No compartas aún esta vista con clientes.")
+
+with tab_bandeja:
+    st.subheader("Pedidos recibidos de todos los municipios")
+    st.caption("Información consultada directamente desde Supabase, no desde esta sesión. El estado impreso solo cambia cuando se confirma una impresión; descargar un PDF no equivale a imprimir.")
+    if st.button("Actualizar pedidos recibidos", type="primary"):
+        st.rerun()
+    try:
+        registros = listar_pedidos_guardados()
+        pendientes = [p for p in registros if p["Estado"] != "impreso"]
+        impresos = [p for p in registros if p["Estado"] == "impreso"]
+        a,b,c = st.columns(3)
+        a.metric("Pedidos recibidos", len(registros))
+        b.metric("Pendientes / sin confirmar", len(pendientes))
+        c.metric("Marcados como impresos", len(impresos))
+        filtro = st.selectbox("Mostrar pedidos", ["Todos","Pendientes / sin confirmar","Impresos"])
+        visibles = registros if filtro == "Todos" else (impresos if filtro == "Impresos" else pendientes)
+        if visibles:
+            st.dataframe(visibles, hide_index=True, use_container_width=True)
+            st.info("Para revisar el detalle, copia el número del pedido y búscalo en la pestaña 3. La selección directa desde esta tabla está pendiente.")
+        else:
+            st.info("No hay pedidos en esta categoría.")
+        st.warning("Esta bandeja es una vista inicial. Antes de compartir la aplicación con clientes debemos proteger el acceso a la información administrativa.")
+    except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as exc:
+        st.error(f"No se pudieron cargar los pedidos de Supabase: {exc}")

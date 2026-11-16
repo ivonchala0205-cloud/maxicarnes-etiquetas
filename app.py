@@ -547,19 +547,37 @@ def listar_pedidos_guardados():
 
 
 def datos_etiqueta_guardados(numero):
-    encontrados = api_supabase("datos_etiqueta_pedido", parametros={
-        "select":"numero_pedido,fecha_beneficio,fecha_empaque,lote,nit",
-        "numero_pedido":"eq."+numero,"limit":"1"})
+    """Lee metadatos incluso si la migración de fecha_empaque está pendiente."""
+    parametros = {"numero_pedido":"eq."+numero,"limit":"1"}
+    try:
+        encontrados = api_supabase("datos_etiqueta_pedido",parametros={
+            **parametros,"select":"numero_pedido,fecha_beneficio,fecha_empaque,lote,nit"})
+    except ValueError as exc:
+        if "fecha_empaque" not in str(exc) or "42703" not in str(exc):
+            raise
+        encontrados = api_supabase("datos_etiqueta_pedido",parametros={
+            **parametros,"select":"numero_pedido,fecha_beneficio,lote,nit"})
+        if encontrados:
+            encontrados[0]["fecha_empaque"] = None
     return encontrados[0] if encontrados else {}
 
 
 def guardar_datos_etiqueta(numero, fecha, lote, nit, fecha_empaque):
     payload = {"numero_pedido":numero,"fecha_beneficio":fecha.isoformat(),
                "lote":lote.strip(),"nit":nit.strip(),"fecha_empaque":fecha_empaque.isoformat()}
-    if datos_etiqueta_guardados(numero):
-        api_supabase("datos_etiqueta_pedido","PATCH",payload,{"numero_pedido":"eq."+numero})
-    else:
-        api_supabase("datos_etiqueta_pedido","POST",payload)
+    existentes = datos_etiqueta_guardados(numero)
+    try:
+        if existentes:
+            api_supabase("datos_etiqueta_pedido","PATCH",payload,{"numero_pedido":"eq."+numero})
+        else:
+            api_supabase("datos_etiqueta_pedido","POST",payload)
+    except ValueError as exc:
+        if "fecha_empaque" in str(exc) and ("PGRST204" in str(exc) or "42703" in str(exc):
+            raise ValueError(
+                "Falta la columna fecha_empaque en Supabase. Ejecuta el archivo "
+                "migracion_fecha_empaque.sql en el editor SQL; no se guardó este pedido."
+            ) from exc
+        raise
 
 
 def generar_pdf_pedidos(numeros):

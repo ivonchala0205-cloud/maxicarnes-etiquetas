@@ -17,6 +17,7 @@ from urllib.error import HTTPError, URLError
 import streamlit as st
 from empaque import distribuir_por_destino, distribuir_bolsas, convertir_a_gramos
 from etiquetas_zpl import generar_zpl, DIRECCION, INSTRUCCIONES, EMPACADOR
+from plantilla_etiqueta import pdf_etiquetas_diseno
 
 st.set_page_config(page_title="Maxi Carnes | Pedidos", page_icon="🏷️", layout="wide")
 st.title("Maxi Carnes | Pedidos y etiquetas")
@@ -383,7 +384,7 @@ with tab_revision:
         st.info("Todavía no hay pedidos registrados en esta sesión.")
     st.divider()
     st.subheader("Descarga PDF - etiquetas 10 x 10 cm")
-    st.caption("PDF de prueba, una página de 10 x 10 cm por bolsa. No marca pedidos como impresos; el diseño y los datos sanitarios deben validarse antes de uso comercial.")
+    st.caption("Plantilla con logo y cuadrícula del diseño aprobado. Una página de 10 x 10 cm por bolsa. Confirmar vigencia sanitaria del código INVIMA, conservación y vencimiento antes de uso comercial.")
     with st.expander("Datos para la prueba de impresión", expanded=True):
         numero_preview = st.text_input("Número del pedido (referencia de prueba)", value="PRUEBA")
         nit_preview = st.text_input("NIT del municipio (opcional)")
@@ -393,7 +394,7 @@ with tab_revision:
         instrucciones_preview = st.text_input("Instrucciones de uso (predeterminadas)", value=INSTRUCCIONES, disabled=True)
     if pedidos:
         try:
-            pdf = pdf_etiquetas(
+            pdf = pdf_etiquetas_diseno(
                 pedidos, numero_pedido=numero_preview, lote=lote,
                 fecha_beneficio=fecha_beneficio, nit=nit_preview,
                 direccion=direccion_preview, conservacion=conservacion_preview,

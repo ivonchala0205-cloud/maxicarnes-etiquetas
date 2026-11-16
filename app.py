@@ -145,17 +145,12 @@ if "pedidos" not in st.session_state:
 if "fila_id" not in st.session_state:
     st.session_state.fila_id = 0
 
+# Pruebas sin contraseña: guardar en la sesión, sin exponer escrituras de Supabase.
+# El guardado real requiere un acceso administrativo protegido.
+autorizado = False
 with st.sidebar:
-    st.subheader("Acceso administrativo")
-    clave_admin = st.text_input("Contraseña de Cristian / administrador", type="password")
-    configurada = st.secrets.get("ADMIN_PASSWORD", "")
-    autorizado = bool(configurada and clave_admin and hmac.compare_digest(clave_admin, configurada))
-    if not configurada:
-        st.warning("Para habilitar guardado real, configura ADMIN_PASSWORD en Streamlit Secrets.")
-    elif autorizado:
-        st.success("Modo administrador autorizado")
-    else:
-        st.info("Sin acceso administrativo: solo simulación, no se guardan pedidos.")
+    st.subheader("Modo de prueba")
+    st.info("Sin contraseña: puedes crear pedidos de prueba y descargar sus etiquetas. No se guardan en Supabase.")
 
 tab_pedidos, tab_catalogo, tab_revision = st.tabs(
     ["1. Formulario por municipio", "2. Municipios, clientes y productos", "3. Revisión semanal"]
@@ -235,7 +230,7 @@ with tab_pedidos:
                             key=f"max_{municipio}_{cliente}_{j}")
                     filas.append((cliente, producto, kilos, regla, maximo))
                 st.divider()
-            enviar = st.form_submit_button("Guardar pedido", type="primary")
+            enviar = st.form_submit_button("Guardar pedido de prueba", type="primary")
         if enviar:
             nuevos, errores = [], []
             for cliente, producto, kilos, regla, maximo in filas:
@@ -274,7 +269,7 @@ with tab_pedidos:
                 st.warning("No hay cantidades positivas. No se creó ningún pedido.")
             elif not autorizado:
                 st.session_state.pedidos = [p for p in st.session_state.pedidos if p["Municipio"] != municipio] + nuevos
-                st.info("Simulación local: pedido NO guardado en Supabase. Ingresa la contraseña administrativa para guardar.")
+                st.success("Pedido de prueba guardado en esta sesión. Ve a Revisión semanal para descargar las etiquetas 10 × 10 cm.")
             elif not total_clientes_db:
                 st.error("No se permite guardar con el catálogo de ejemplo. Verifica Supabase.")
             else:

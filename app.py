@@ -145,6 +145,8 @@ if "productos" not in st.session_state:
     st.session_state.productos = productos_db
 if "pedidos" not in st.session_state:
     st.session_state.pedidos = []
+if "contador_pedidos" not in st.session_state:
+    st.session_state.contador_pedidos = 0
 if "fila_id" not in st.session_state:
     st.session_state.fila_id = 0
 
@@ -233,7 +235,7 @@ with tab_pedidos:
                             key=f"max_{municipio}_{cliente}_{j}")
                     filas.append((cliente, producto, kilos, regla, maximo))
                 st.divider()
-            enviar = st.form_submit_button("Guardar pedido de prueba", type="primary")
+            enviar = st.form_submit_button("Guardar pedido", type="primary")
         if enviar:
             nuevos, errores = [], []
             for cliente, producto, kilos, regla, maximo in filas:
@@ -271,8 +273,12 @@ with tab_pedidos:
             elif not nuevos:
                 st.warning("No hay cantidades positivas. No se creó ningún pedido.")
             elif not autorizado:
-                st.session_state.pedidos = [p for p in st.session_state.pedidos if p["Municipio"] != municipio] + nuevos
-                st.success("Pedido de prueba guardado en esta sesión. Ve a Revisión semanal para descargar las etiquetas 10 × 10 cm.")
+                st.session_state.contador_pedidos += 1
+                numero = f"MC-{date.today():%Y%m%d}-{st.session_state.contador_pedidos:03d}"
+                for p in nuevos:
+                    p["Numero pedido"] = numero
+                st.session_state.pedidos.extend(nuevos)
+                st.success(f"Pedido {numero} registrado en esta sesión. Puedes revisarlo o eliminarlo en Revisión semanal.")
             elif not total_clientes_db:
                 st.error("No se permite guardar con el catálogo de ejemplo. Verifica Supabase.")
             else:
@@ -361,14 +367,24 @@ def archivo_delimitado(columnas, filas, separador):
 
 
 with tab_revision:
-    st.subheader("Consolidado de esta sesión")
-    st.caption("Los catálogos se leen de Supabase; los pedidos de prueba no se guardan ni se imprimen ni se reciben desde enlaces externos.")
+    st.subheader("Pedidos registrados en esta sesión")
+    st.caption("Estos pedidos todavía son temporales: no se reciben desde otros computadores ni se guardan en Supabase.")
     with st.expander("Datos que Cristian diligenciará antes de generar etiquetas", expanded=True):
         fecha_beneficio = st.date_input("Fecha de beneficio (manual)", value=None, format="DD/MM/YYYY")
         lote = st.text_input("Número de lote (manual)")
         st.write("Fecha de empaque: se fijará al confirmar la generación real de etiquetas.")
         st.write("Fecha de vencimiento: empaque + 30 días calendario (pendiente validación sanitaria).")
-    pedidos = st.session_state.pedidos
+    todos_los_pedidos = st.session_state.pedidos
+    numeros = list(dict.fromkeys(p.get("Numero pedido", "SIN NÚMERO") for p in todos_los_pedidos))
+    numero_seleccionado = st.selectbox("Selecciona el pedido para revisar, imprimir o eliminar", numeros) if numeros else None
+    pedidos = [p for p in todos_los_pedidos if p.get("Numero pedido", "SIN NÚMERO") == numero_seleccionado] if numero_seleccionado else []
+    if numero_seleccionado:
+        with st.expander("Eliminar pedido", expanded=False):
+            st.warning("Esta acción elimina el pedido seleccionado de esta sesión. No afecta registros de Supabase.")
+            confirmar_borrado = st.checkbox("Confirmo que deseo eliminar este pedido", key="confirmar_borrado")
+            if st.button("Eliminar pedido seleccionado", disabled=not confirmar_borrado):
+                st.session_state.pedidos = [p for p in st.session_state.pedidos if p.get("Numero pedido", "SIN NÚMERO") != numero_seleccionado]
+                st.rerun()
     municipios_con_pedido = {p["Municipio"] for p in pedidos}
     st.metric("Municipios con cantidades positivas", len(municipios_con_pedido))
     st.metric("Bolsas / etiquetas previstas", sum(len(p["Bolsas"]) for p in pedidos))
@@ -383,10 +399,10 @@ with tab_revision:
     else:
         st.info("Todavía no hay pedidos registrados en esta sesión.")
     st.divider()
-    st.subheader("Descarga PDF - etiquetas 10 x 10 cm")
+    st.subheader("Imprimir etiquetas PDF - 10 x 10 cm")
     st.caption("Plantilla con logo y cuadrícula del diseño aprobado. Una página de 10 x 10 cm por bolsa. Confirmar vigencia sanitaria del código INVIMA, conservación y vencimiento antes de uso comercial.")
-    with st.expander("Datos para la prueba de impresión", expanded=True):
-        numero_preview = st.text_input("Número del pedido (referencia de prueba)", value="PRUEBA")
+    with st.expander("Datos de las etiquetas", expanded=True):
+        numero_preview = st.text_input("Número del pedido", value=numero_seleccionado or "", disabled=True)
         nit_preview = st.text_input("NIT del municipio (opcional)")
         st.text_input("Procesado y empacado por (predeterminado)", value=EMPACADOR, disabled=True)
         direccion_preview = st.text_input("Dirección de procesado y empacado (predeterminada)", value=DIRECCION, disabled=True)

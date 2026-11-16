@@ -3,6 +3,13 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 import json
 import hmac
+from io import BytesIO
+from xml.sax.saxutils import escape
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, KeepTogether
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib import colors
+from reportlab.lib.units import mm
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -281,6 +288,50 @@ with tab_pedidos:
                     st.error("No se pudo confirmar el guardado. Revisa Supabase antes de reintentar.")
                     st.caption(f"Error: {type(exc).__name__}" + (f" (HTTP {exc.code})" if isinstance(exc, HTTPError) else f": {exc}"))
 
+def pdf_etiquetas(lineas, numero_pedido="VISTA PREVIA", lote="", fecha_beneficio=None,
+                  fecha_empaque=None, nit="", direccion="", conservacion="", instrucciones=""):
+    """Una página de 100 x 100 mm por bolsa. No supone datos sanitarios faltantes."""
+    buffer = BytesIO()
+    fecha_empaque = fecha_empaque or date.today()
+    estilos = {
+        "titulo": ParagraphStyle("titulo", fontName="Helvetica-Bold", fontSize=11, leading=12, alignment=TA_CENTER, spaceAfter=5),
+        "principal": ParagraphStyle("principal", fontName="Helvetica-Bold", fontSize=9, leading=11, spaceAfter=4),
+        "dato": ParagraphStyle("dato", fontName="Helvetica", fontSize=7.5, leading=9.5, spaceAfter=3),
+        "nota": ParagraphStyle("nota", fontName="Helvetica", fontSize=6.5, leading=8, spaceAfter=3),
+    }
+    doc = SimpleDocTemplate(buffer, pagesize=(100 * mm, 100 * mm),
+        leftMargin=6 * mm, rightMargin=6 * mm, topMargin=6 * mm, bottomMargin=6 * mm)
+    story = []
+    def par(texto, estilo="dato"):
+        return Paragraph(escape(str(texto)), estilos[estilo])
+    for linea in lineas:
+        for indice, gramos in enumerate(linea["Bolsas"], 1):
+            if story:
+                from reportlab.platypus import PageBreak
+                story.append(PageBreak())
+            story.append(par("MAXI CARNE - ETIQUETA DE PRUEBA", "titulo"))
+            story.append(par(linea["Producto"], "principal"))
+            story.append(par("Municipio: " + linea["Municipio"]))
+            story.append(par("Cliente / sucursal: " + linea["Cliente"]))
+            if nit.strip():
+                story.append(par("NIT del municipio: " + nit.strip()))
+            story.append(par(f"Peso neto: {gramos / 1000:.3f} kg ({gramos} g)", "principal"))
+            story.append(par(f"Pedido: {numero_pedido} | Bolsa: {indice}/{len(linea['Bolsas'])}"))
+            story.append(par("Lote: " + (lote or "PENDIENTE")))
+            story.append(par("Fecha de beneficio: " + (fecha_beneficio.strftime("%d/%m/%Y") if fecha_beneficio else "PENDIENTE")))
+            story.append(par("Fecha de empaque: " + fecha_empaque.strftime("%d/%m/%Y")))
+            story.append(par("Vencimiento: PENDIENTE DE VALIDACION SANITARIA"))
+            story.append(par("Conservacion: " + (conservacion or "PENDIENTE DE CONFIRMAR"), "nota"))
+            story.append(par("Procesado y empacado por: Maxi Carne", "nota"))
+            story.append(par("Direccion: " + (direccion or "PENDIENTE DE CONFIRMAR"), "nota"))
+            story.append(par("Instrucciones: " + (instrucciones or "PENDIENTES DE CONFIRMAR"), "nota"))
+            story.append(par("Codigo INVIMA: 233DM (verificar aplicabilidad)", "nota"))
+    if not story:
+        raise ValueError("No hay bolsas para generar etiquetas.")
+    doc.build(story)
+    return buffer.getvalue()
+
+
 with tab_revision:
     st.subheader("Consolidado de esta sesión")
     st.caption("Los catálogos se leen de Supabase; los pedidos de prueba no se guardan ni se imprimen ni se reciben desde enlaces externos.")
@@ -303,4 +354,27 @@ with tab_revision:
         } for p in pedidos], use_container_width=True, hide_index=True)
     else:
         st.info("Todavía no hay pedidos registrados en esta sesión.")
-    st.warning("Pendiente: consulta de pedidos históricos, acceso seguro por municipio e impresión Zebra en lote.")
+    st.divider()
+    st.subheader("Vista previa PDF - etiquetas 10 x 10 cm")
+    st.caption("Funciona con los productos cargados en esta sesión. No marca pedidos como impresos y NO es una etiqueta definitiva para comercializar.")
+    with st.expander("Datos para la prueba de impresión", expanded=True):
+        numero_preview = st.text_input("Número del pedido (referencia de prueba)", value="PRUEBA")
+        nit_preview = st.text_input("NIT del municipio (opcional)")
+        direccion_preview = st.text_input("Dirección de procesado y empacado (verificar)")
+        conservacion_preview = st.text_input("Condiciones de conservación (verificar)")
+        instrucciones_preview = st.text_input("Instrucciones de uso (verificar)")
+    if pedidos:
+        try:
+            pdf = pdf_etiquetas(pedidos, numero_pedido=numero_preview,
+                lote=lote, fecha_beneficio=fecha_beneficio,
+                nit=nit_preview, direccion=direccion_preview,
+                conservacion=conservacion_preview, instrucciones=instrucciones_preview)
+            st.download_button("Descargar PDF de prueba (100 x 100 mm)",
+                data=pdf, file_name="maxi_carne_etiquetas_prueba_100x100.pdf",
+                mime="application/pdf", type="primary")
+            st.info("Abre el PDF en el computador de Cristian y selecciona SAT TT448-2 USE, papel 100 x 100 mm y escala 100 %. Primero imprime solo una etiqueta de prueba.")
+        except Exception as exc:
+            st.error(f"No se pudo generar el PDF: {exc}")
+    else:
+        st.info("Para generar un PDF de prueba, introduce cantidades en el formulario y pulsa Guardar pedido. Sin contraseña, quedará solo en esta sesión.")
+    st.warning("Pendiente: imprimir desde pedidos históricos de Supabase, registrar impresión y reimprimir etiquetas específicas.")

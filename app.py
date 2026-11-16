@@ -588,13 +588,13 @@ with tab_revision:
             if seleccion:
                 st.write("**Pedidos elegidos:** "+str(len(seleccion)))
                 st.caption("Si todos comparten fecha y lote, puedes guardar esos datos en conjunto. Si son diferentes, usa la edición individual.")
-                with st.expander("Asignar fecha, lote y NIT a los seleccionados",expanded=True):
+                with st.expander("Asignar fecha, lote y Fabricado para a los seleccionados",expanded=True):
                     with st.form("metadatos_pendientes"):
                         fecha_comun = st.date_input("Fecha de beneficio",value=date.today(),format="DD/MM/YYYY")
                         lote_comun = st.text_input("Lote (obligatorio)")
-                        nit_comun = st.text_input("NIT (opcional)")
+                        nit_comun = st.text_input("Fabricado para (NIT opcional)")
                         confirmar = st.checkbox("Confirmo que estos mismos datos corresponden a todos los pedidos seleccionados")
-                        guardar = st.form_submit_button("Guardar fecha, lote y NIT")
+                        guardar = st.form_submit_button("Guardar fecha, lote y Fabricado para")
                     if guardar:
                         if not lote_comun.strip() or not confirmar:
                             st.error("Completa el lote y confirma que los datos aplican a todos los seleccionados.")
@@ -607,7 +607,7 @@ with tab_revision:
                                 st.success(f"Datos guardados en {len(guardados)} pedidos.")
                             except Exception as exc:
                                 st.error(f"Error: {exc}. Se guardaron {len(guardados)} pedidos; revisa antes de repetir.")
-                with st.expander("Editar fecha, lote o NIT de un pedido específico"):
+                with st.expander("Editar fecha, lote o Fabricado para de un pedido específico"):
                     numero_individual = st.selectbox("Pedido",seleccion,key="pendiente_individual")
                     datos = datos_etiqueta_guardados(numero_individual)
                     with st.form("datos_individual_pendiente_"+numero_individual):
@@ -615,7 +615,7 @@ with tab_revision:
                             "Fecha de beneficio",value=date.fromisoformat(datos["fecha_beneficio"])
                             if datos.get("fecha_beneficio") else date.today(),format="DD/MM/YYYY")
                         lote_individual = st.text_input("Lote",value=datos.get("lote") or "")
-                        nit_individual = st.text_input("NIT (opcional)",value=datos.get("nit") or "")
+                        nit_individual = st.text_input("Fabricado para (NIT opcional)",value=datos.get("nit") or "")
                         if st.form_submit_button("Guardar datos de este pedido"):
                             if lote_individual.strip():
                                 guardar_datos_etiqueta(numero_individual,fecha_individual,lote_individual,nit_individual)
@@ -713,7 +713,7 @@ with tab_bandeja:
                     fecha = st.date_input("Fecha de beneficio",value=date.fromisoformat(datos["fecha_beneficio"])
                                           if datos.get("fecha_beneficio") else date.today(),format="DD/MM/YYYY")
                     lote = st.text_input("Lote (obligatorio)",value=datos.get("lote") or "")
-                    nit = st.text_input("NIT (opcional)",value=datos.get("nit") or "")
+                    nit = st.text_input("Fabricado para (NIT opcional)",value=datos.get("nit") or "")
                     pesos = []
                     for i,etiqueta in enumerate(seleccionadas):
                         st.caption(f'{etiqueta["Cliente"]} — {etiqueta["Producto"]}')

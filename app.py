@@ -318,10 +318,10 @@ def pdf_etiquetas(lineas, numero_pedido="VISTA PREVIA", lote="", fecha_beneficio
             story.append(par("Fecha de beneficio: " + (fecha_beneficio.strftime("%d/%m/%Y") if fecha_beneficio else "PENDIENTE")))
             story.append(par("Fecha de empaque: " + fecha_empaque.strftime("%d/%m/%Y")))
             story.append(par("Vencimiento: PENDIENTE DE VALIDACION SANITARIA"))
-            story.append(par("Conservacion: " + (conservacion or "PENDIENTE DE CONFIRMAR"), "nota"))
-            story.append(par("Procesado y empacado por: Maxi Carne", "nota"))
-            story.append(par("Direccion: " + (direccion or "PENDIENTE DE CONFIRMAR"), "nota"))
-            story.append(par("Instrucciones: " + (instrucciones or "PENDIENTES DE CONFIRMAR"), "nota"))
+            story.append(par("Conservación: " + (conservacion or "Mantener refrigerado entre 0 °C y 4 °C"), "nota"))
+            story.append(par("Procesado y empacado por: MaxiCarnes H&M", "nota"))
+            story.append(par("Dirección: " + (direccion or "Calle 3 # 12-74 Tenjo Cundinamarca"), "nota"))
+            story.append(par("Instrucciones: " + (instrucciones or "Producto que requiere cocción para su consumo"), "nota"))
             story.append(par("Codigo INVIMA: 233DM (verificar aplicabilidad)", "nota"))
     if not story:
         raise ValueError("No hay bolsas para generar etiquetas.")
@@ -389,7 +389,7 @@ with tab_revision:
         nit_preview = st.text_input("NIT del municipio (opcional)")
         st.text_input("Procesado y empacado por (predeterminado)", value=EMPACADOR, disabled=True)
         direccion_preview = st.text_input("Dirección de procesado y empacado (predeterminada)", value=DIRECCION, disabled=True)
-        conservacion_preview = st.text_input("Condiciones de conservación (verificar)")
+        conservacion_preview = st.text_input("Condiciones de conservación (predeterminadas)", value="Mantener refrigerado entre 0 °C y 4 °C", disabled=True)
         instrucciones_preview = st.text_input("Instrucciones de uso (predeterminadas)", value=INSTRUCCIONES, disabled=True)
     if pedidos:
         try:

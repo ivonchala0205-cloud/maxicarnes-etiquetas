@@ -705,6 +705,8 @@ with tab_bandeja:
                     i,j = (int(x) for x in clave.split(":"))
                     copia = dict(lineas[i])
                     copia["Bolsas"] = [lineas[i]["Bolsas"][j]]
+                    copia["Número bolsa original"] = j + 1
+                    copia["Total bolsas original"] = len(lineas[i]["Bolsas"])
                     seleccionadas.append(copia)
                 datos = datos_etiqueta_guardados(numero)
                 with st.form("reimprimir_"+numero):

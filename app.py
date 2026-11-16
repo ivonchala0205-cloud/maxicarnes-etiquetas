@@ -62,9 +62,13 @@ def api_supabase(tabla, metodo="GET", datos=None, parametros=None):
         headers["Content-Type"] = "application/json"
         headers["Prefer"] = "return=representation"
     req = Request(destino, data=cuerpo, headers=headers, method=metodo)
-    with urlopen(req, timeout=25) as resp:
-        texto = resp.read().decode("utf-8")
-        return json.loads(texto) if texto else []
+    try:
+        with urlopen(req, timeout=25) as resp:
+            texto = resp.read().decode("utf-8")
+            return json.loads(texto) if texto else []
+    except HTTPError as exc:
+        detalle = exc.read().decode("utf-8", errors="replace")[:700]
+        raise ValueError(f"Supabase rechazó la operación {metodo} en {tabla} (HTTP {exc.code}): {detalle}") from exc
 
 
 def guardar_pedido_real(municipio, lineas, municipios_db, clientes_db, productos_db):

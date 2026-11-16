@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 import streamlit as st
 from empaque import distribuir_por_destino, distribuir_bolsas, convertir_a_gramos
+from etiquetas_zpl import generar_zpl, DIRECCION, INSTRUCCIONES, EMPACADOR
 
 st.set_page_config(page_title="Maxi Carnes | Pedidos", page_icon="🏷️", layout="wide")
 st.title("Maxi Carnes | Pedidos y etiquetas")
@@ -350,24 +351,24 @@ with tab_revision:
     else:
         st.info("Todavía no hay pedidos registrados en esta sesión.")
     st.divider()
-    st.subheader("Vista previa PDF - etiquetas 10 x 10 cm")
-    st.caption("Funciona con los productos cargados en esta sesión. No marca pedidos como impresos y NO es una etiqueta definitiva para comercializar.")
+    st.subheader("Archivo de impresión ZPL - etiquetas 10 x 10 cm")
+    st.caption("Archivo de prueba desde esta sesión; no marca pedidos como impresos. El diseño definitivo con logo gráfico y datos sanitarios validados está pendiente.")
     with st.expander("Datos para la prueba de impresión", expanded=True):
         numero_preview = st.text_input("Número del pedido (referencia de prueba)", value="PRUEBA")
         nit_preview = st.text_input("NIT del municipio (opcional)")
-        direccion_preview = st.text_input("Dirección de procesado y empacado (verificar)")
+        st.text_input("Procesado y empacado por (predeterminado)", value=EMPACADOR, disabled=True)
+        direccion_preview = st.text_input("Dirección de procesado y empacado (predeterminada)", value=DIRECCION, disabled=True)
         conservacion_preview = st.text_input("Condiciones de conservación (verificar)")
-        instrucciones_preview = st.text_input("Instrucciones de uso (verificar)")
+        instrucciones_preview = st.text_input("Instrucciones de uso (predeterminadas)", value=INSTRUCCIONES, disabled=True)
     if pedidos:
         try:
-            pdf = pdf_etiquetas(pedidos, numero_pedido=numero_preview,
+            zpl = generar_zpl(pedidos, numero_pedido=numero_preview,
                 lote=lote, fecha_beneficio=fecha_beneficio,
-                nit=nit_preview, direccion=direccion_preview,
-                conservacion=conservacion_preview, instrucciones=instrucciones_preview)
-            st.download_button("Descargar PDF de prueba (100 x 100 mm)",
-                data=pdf, file_name="maxi_carne_etiquetas_prueba_100x100.pdf",
-                mime="application/pdf", type="primary")
-            st.info("Abre el PDF en el computador de Cristian y selecciona SAT TT448-2 USE, papel 100 x 100 mm y escala 100 %. Primero imprime solo una etiqueta de prueba.")
+                nit=nit_preview, conservacion=conservacion_preview)
+            st.download_button("Descargar archivo ZPL de prueba (100 x 100 mm)",
+                data=zpl, file_name="maxicarnes_etiquetas_prueba_100x100.zpl",
+                mime="application/octet-stream", type="primary")
+            st.info("Archivo ZPL para probar con la SAT TT448-2 USE (ZPL), 203 dpi. No se carga como diseño editable de BarTender; se envía con una utilidad compatible ZPL. Probar primero una sola etiqueta. El logo es texto provisional.")
         except Exception as exc:
             st.error(f"No se pudo generar el PDF: {exc}")
     else:

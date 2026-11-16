@@ -161,73 +161,113 @@ tab_pedidos, tab_catalogo, tab_revision, tab_bandeja = st.tabs(
     ["1. Formulario por municipio", "2. Municipios, clientes y productos", "3. Revisión semanal", "4. Pedidos recibidos"]
 )
 
-with st.expander("Importar pedidos desde Excel (.xlsx)", expanded=False):
-    st.write("Carga un municipio o varios municipios en el mismo archivo. Revisa los datos antes de guardarlos.")
-    plantilla = BytesIO()
-    import pandas as pd
-    with pd.ExcelWriter(plantilla, engine="openpyxl") as writer:
-        pd.DataFrame([{"Municipio":"GAMA","Cliente":"TECNICO AGROPECUARIO MARTIN ROMERO",
-                       "Producto":"CARNE DE RES - GOULASH","Kilos":5.1}]).to_excel(writer,index=False)
-    st.download_button("Descargar plantilla Excel",plantilla.getvalue(),"plantilla_pedidos_maxicarnes.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    archivo = st.file_uploader("Selecciona el Excel de pedidos",type=["xlsx"],key="excel_pedidos")
-    if archivo is not None:
+with st.expander("Importar Excel original de Cristian (por hojas)", expanded=False):
+    st.caption("Reconoce cada hoja como municipio, identifica productos y cantidades y permite revisar antes de crear pedidos. No modifica pedidos existentes.")
+    archivo = st.file_uploader("Subir el Excel original", type=["xlsx"], key="excel_pedidos")
+    if archivo:
+        import pandas as pd
+        import unicodedata
+        def normalizar(valor):
+            txt = unicodedata.normalize("NFKD", str(valor or "").strip())
+            return " ".join("".join(ch for ch in txt if not unicodedata.combining(ch)).upper().split())
         try:
-            tabla_excel = pd.read_excel(archivo, dtype=str).fillna("")
-            tabla_excel.columns = [str(x).strip().casefold() for x in tabla_excel.columns]
-            requeridas = ["municipio","cliente","producto","kilos"]
-            if any(c not in tabla_excel for c in requeridas):
-                st.error("El Excel debe incluir las columnas: Municipio, Cliente, Producto y Kilos.")
+            libro = pd.read_excel(archivo, sheet_name=None, header=None)
+            mids, cids, pids = ids_catalogo()
+            mapa_m = {normalizar(k): k for k in mids}
+            mapa_p = {normalizar(k): k for k in pids}
+            mapa_c = {(mid, normalizar(nombre)): nombre for (mid,nombre) in cids}
+            grupos, errores_excel = {}, []
+            for hoja, df in libro.items():
+                if "TOTAL" in normalizar(hoja) or "RESUMEN" in normalizar(hoja):
+                    continue
+                municipio_excel = mapa_m.get(normalizar(hoja))
+                if not municipio_excel:
+                    errores_excel.append(f"Hoja {hoja}: municipio no registrado")
+                    continue
+                producto = None
+                columnas = []
+                for columna in range(df.shape[1]):
+                    encabezado = df.iat[0,columna] if df.shape[0] else ""
+                    if pd.notna(encabezado) and "CARNE" in normalizar(encabezado):
+                        producto = mapa_p.get(normalizar(encabezado))
+                        if not producto:
+                            errores_excel.append(f"Hoja {hoja}: producto no registrado: {encabezado}")
+                            continue
+                        columnas.append((columna, producto))
+                if not columnas and normalizar(hoja) == "UBALA":
+                    continue
+                for col, producto in columnas:
+                    for fila in range(3,df.shape[0]):
+                        cliente_raw = df.iat[fila,col]
+                        if pd.isna(cliente_raw) or not str(cliente_raw).strip():
+                            continue
+                        cliente_txt = normalizar(cliente_raw)
+                        if "TOTAL" in cliente_txt or "OBSERVACION" in cliente_txt or "RECOMIENDA" in cliente_txt:
+                            continue
+                        col_gramos = col+1
+                        col_kilos = col+2
+                        gramos_raw = df.iat[fila,col_gramos] if col_gramos < df.shape[1] else None
+                        kilos_raw = df.iat[fila,col_kilos] if col_kilos < df.shape[1] else None
+                        try:
+                            if pd.notna(gramos_raw) and str(gramos_raw).strip():
+                                gramos = int(round(float(gramos_raw)))
+                            elif pd.notna(kilos_raw) and str(kilos_raw).strip():
+                                gramos = int(round(float(kilos_raw)*1000))
+                            else:
+                                continue
+                            if gramos <= 0:
+                                continue
+                            cliente = mapa_c.get((mids[municipio_excel],cliente_txt))
+                            if not cliente:
+                                errores_excel.append(f"{hoja}, fila {fila+1}: cliente no registrado: {cliente_raw}")
+                                continue
+                            kilos = str(Decimal(gramos)/1000)
+                            grupos.setdefault(municipio_excel,[]).append({
+                                "Municipio":municipio_excel,"Cliente":cliente,
+                                "Producto":producto,"Kilos":kilos,"Empaque":"Predeterminada",
+                                "Bolsas":distribuir_por_destino(kilos,municipio_excel,producto),
+                                "Capacidad especial":None})
+                        except (ValueError,TypeError,InvalidOperation) as exc:
+                            errores_excel.append(f"{hoja}, fila {fila+1}: cantidad inválida ({exc})")
+            if errores_excel:
+                st.error("Hay datos sin reconocer. No se permitirá guardar hasta corregirlos.")
+                st.dataframe(pd.DataFrame({"Observaciones":errores_excel}),hide_index=True)
+            elif not grupos:
+                st.warning("No se encontraron cantidades para importar.")
             else:
-                mids, cids, pids = ids_catalogo()
-                nombres_m = {k.casefold().strip():k for k in mids}
-                nombres_c = {(mid,n.casefold().strip()):n for mid,n in cids}
-                nombres_p = {k.casefold().strip():k for k in pids}
-                grupos, errores_excel = {}, []
-                for fila_num, fila in tabla_excel.iterrows():
-                    if not any(str(fila[c]).strip() for c in requeridas):
-                        continue
-                    municipio_excel = nombres_m.get(str(fila["municipio"]).casefold().strip())
-                    producto_excel = nombres_p.get(str(fila["producto"]).casefold().strip())
-                    cliente_excel = nombres_c.get((mids.get(municipio_excel),str(fila["cliente"]).casefold().strip())) if municipio_excel else None
-                    try:
-                        if not municipio_excel or not cliente_excel or not producto_excel:
-                            raise ValueError("Municipio, cliente o producto no coincide con el catálogo")
-                        gramos = convertir_a_gramos(str(fila["kilos"]).strip().replace(",",".")) 
-                        if gramos <= 0:
-                            raise ValueError("La cantidad debe ser mayor que cero")
-                        kilos = str(Decimal(gramos)/1000)
-                        bolsas = distribuir_por_destino(kilos,municipio_excel,producto_excel)
-                        grupos.setdefault(municipio_excel,[]).append({
-                            "Municipio":municipio_excel,"Cliente":cliente_excel,
-                            "Producto":producto_excel,"Kilos":kilos,"Empaque":"Predeterminada",
-                            "Bolsas":bolsas,"Capacidad especial":None})
-                    except (ValueError,InvalidOperation,KeyError) as exc:
-                        errores_excel.append(f"Fila {fila_num+2}: {exc}")
-                if errores_excel:
-                    st.error("Corrige estas filas antes de importar:")
-                    for e in errores_excel[:30]:
-                        st.write(e)
-                elif not grupos:
-                    st.warning("No hay pedidos válidos en el archivo.")
-                else:
-                    st.success(f"Archivo validado: {len(grupos)} municipios, {sum(map(len,grupos.values()))} productos/sucursales y {sum(len(p['Bolsas']) for v in grupos.values() for p in v)} etiquetas.")
-                    st.dataframe([{"Municipio":m,"Cliente":p["Cliente"],"Producto":p["Producto"],"Kilos":p["Kilos"],"Bolsas":len(p["Bolsas"])} for m,items in grupos.items() for p in items],hide_index=True,use_container_width=True)
-                    st.warning("Al confirmar, se creará un pedido nuevo por municipio. Comprueba que no se hayan importado antes.")
-                    if st.checkbox("Revisé el archivo y autorizo crear estos pedidos",key="confirmar_excel"):
-                        if st.button("Guardar pedidos del Excel en Supabase",type="primary"):
-                            resultados = []
-                            for m,items in grupos.items():
-                                try:
-                                    pedido = guardar_pedido_real(m,items,mids,cids,pids)
-                                    resultados.append((m,pedido.get("numero_pedido") or pedido["id"]))
-                                except Exception as exc:
-                                    st.error(f"No se pudo guardar {m}: {exc}. Los municipios anteriores sí pueden haberse guardado; verifica antes de reintentar.")
-                                    break
-                            for m,n in resultados:
-                                st.success(f"{m}: pedido {n} guardado")
+                st.success(f"Reconocidos {len(grupos)} municipios y {sum(map(len,grupos.values()))} registros.")
+                opciones = ["Todos los municipios"] + list(grupos)
+                filtro = st.selectbox("Qué deseas cargar",opciones)
+                seleccion = grupos if filtro == "Todos los municipios" else {filtro:grupos[filtro]}
+                filas = [{"Municipio":m,"Cliente":p["Cliente"],"Producto":p["Producto"],"Kilos":float(p["Kilos"])}
+                         for m,items in seleccion.items() for p in items]
+                st.caption("Revisa y corrige las cantidades antes de generar el pedido.")
+                editadas = st.data_editor(pd.DataFrame(filas),hide_index=True,use_container_width=True,
+                                         disabled=["Municipio","Cliente","Producto"],num_rows="fixed",key="editor_excel")
+                st.warning("Guardar crea pedidos nuevos. Verifica antes que el Excel no haya sido importado anteriormente.")
+                if st.checkbox("Confirmo que revisé el Excel y quiero crear estos pedidos",key="confirmar_excel"):
+                    if st.button("Generar y guardar pedidos",type="primary",key="guardar_excel"):
+                        nuevos = {}
+                        try:
+                            for _,fila in editadas.iterrows():
+                                m,cliente,producto = fila["Municipio"],fila["Cliente"],fila["Producto"]
+                                kilos = str(fila["Kilos"])
+                                gramos = convertir_a_gramos(kilos)
+                                if gramos <= 0:
+                                    raise ValueError(f"Cantidad no válida para {cliente}")
+                                nuevos.setdefault(m,[]).append({
+                                    "Municipio":m,"Cliente":cliente,"Producto":producto,
+                                    "Kilos":kilos,"Empaque":"Predeterminada",
+                                    "Bolsas":distribuir_por_destino(kilos,m,producto),
+                                    "Capacidad especial":None})
+                            for m,items in nuevos.items():
+                                pedido = guardar_pedido_real(m,items,mids,cids,pids)
+                                st.success(f'{m}: guardado como {pedido.get("numero_pedido") or pedido["id"]}')
+                        except Exception as exc:
+                            st.error(f"Importación detenida: {exc}. Si se guardaron municipios anteriores, no repitas el proceso sin revisar la bandeja.")
         except Exception as exc:
             st.error(f"No se pudo leer el Excel: {exc}")
+
 
 with tab_catalogo:
     st.subheader("Catálogo de prueba")

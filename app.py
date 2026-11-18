@@ -1,5 +1,6 @@
 """Pedidos Maxi Carnes: catálogo real y guardado administrativo en Supabase."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 import json
 import csv
@@ -531,7 +532,7 @@ def consultar_pedido_por_numero(numero):
 def listar_pedidos_guardados():
     """Consulta cabeceras recientes, independientemente de la sesión del navegador."""
     registros = api_supabase("pedidos", parametros={
-        "select":"id,numero_pedido,municipio_id,estado,enviado_en,impreso_en",
+        "select":"*",
         "order":"enviado_en.desc","limit":"500"
     })
     municipios = api_supabase("municipios", parametros={"select":"id,nombre","limit":"1000"})
@@ -548,18 +549,47 @@ def listar_pedidos_guardados():
 
 def datos_etiqueta_guardados(numero):
     encontrados = api_supabase("datos_etiqueta_pedido", parametros={
-        "select":"numero_pedido,fecha_beneficio,lote,nit",
+        "select":"numero_pedido,fecha_beneficio,lote,nit,fecha_empaque",
         "numero_pedido":"eq."+numero,"limit":"1"})
     return encontrados[0] if encontrados else {}
 
 
 def guardar_datos_etiqueta(numero, fecha, lote, nit):
+    anteriores = datos_etiqueta_guardados(numero)
+    if anteriores.get("fecha_empaque") and anteriores.get("fecha_beneficio") != fecha.isoformat():
+        raise ValueError("La fecha de beneficio original no puede cambiar después de generar etiquetas.")
     payload = {"numero_pedido":numero,"fecha_beneficio":fecha.isoformat(),
                "lote":lote.strip(),"nit":nit.strip()}
-    if datos_etiqueta_guardados(numero):
+    if anteriores:
         api_supabase("datos_etiqueta_pedido","PATCH",payload,{"numero_pedido":"eq."+numero})
     else:
         api_supabase("datos_etiqueta_pedido","POST",payload)
+
+
+def asegurar_fecha_empaque(numero, cabecera, meta):
+    """Fija una sola vez la fecha; una reimpresión nunca inventa fechas antiguas."""
+    if meta.get("fecha_empaque"):
+        return date.fromisoformat(meta["fecha_empaque"])
+    if cabecera.get("estado") == "impreso":
+        raise ValueError("El pedido " + numero + " no tiene fecha de empaque original. "
+                         "Debe recuperarse de la etiqueta original en Supabase antes de reimprimir.")
+    manana = datetime.now(ZoneInfo("America/Bogota")).date() + timedelta(days=1)
+    api_supabase("datos_etiqueta_pedido", "PATCH", {"fecha_empaque": manana.isoformat()},
+                 {"numero_pedido": "eq." + numero, "fecha_empaque": "is.null"})
+    # Volver a leer también resuelve dos sesiones que generan simultáneamente.
+    guardados = datos_etiqueta_guardados(numero)
+    if not guardados.get("fecha_empaque"):
+        raise ValueError("No se pudo guardar la fecha de empaque de " + numero)
+    return date.fromisoformat(guardados["fecha_empaque"])
+
+
+def confirmar_pedidos_impresos(numeros):
+    """Comprueba cada escritura; no requiere columnas opcionales ni elimina pedidos."""
+    for numero in numeros:
+        actualizados = api_supabase("pedidos", "PATCH", {"estado": "impreso"},
+                                     {"numero_pedido": "eq." + numero})
+        if len(actualizados) != 1 or actualizados[0].get("estado") != "impreso":
+            raise ValueError("Supabase no confirmó el estado impreso de " + numero)
 
 
 def generar_pdf_pedidos(numeros):
@@ -572,9 +602,11 @@ def generar_pdf_pedidos(numeros):
         cabecera, lineas = consultar_pedido_por_numero(numero)
         if not cabecera or not lineas:
             raise ValueError("No hay productos para "+numero)
+        fecha_empaque = asegurar_fecha_empaque(numero, cabecera, meta)
         archivo = pdf_etiquetas_diseno(
             lineas, numero_pedido=numero, lote=meta["lote"],
             fecha_beneficio=date.fromisoformat(meta["fecha_beneficio"]),
+            fecha_empaque=fecha_empaque,
             nit=meta.get("nit") or "",direccion=DIRECCION,
             conservacion="Mantener refrigerado entre 0 °C y 4 °C",
             instrucciones="Producto que requiere cocción para su consumo")
@@ -665,13 +697,11 @@ with tab_revision:
                                        file_name="MaxiCarnes_pedidos_pendientes.pdf",mime="application/pdf",type="primary")
                     st.warning("Después de imprimir físicamente, confirma cuáles pedidos se imprimieron correctamente.")
                     confirmar_impresion = st.checkbox("Confirmo que todas las etiquetas de estos pedidos ya fueron impresas",
-                                                       key="confirmacion_impresion_pendientes")
+                                                       key="confirmacion_impresion_"+"_".join(seleccion))
                     if st.button("Marcar pedidos como impresos y pasar al módulo 4",
                                  disabled=not confirmar_impresion,key="marcar_impresos"):
                         try:
-                            for numero in seleccion:
-                                api_supabase("pedidos","PATCH",{"estado":"impreso","impreso_en":date.today().isoformat()},
-                                             {"numero_pedido":"eq."+numero})
+                            confirmar_pedidos_impresos(seleccion)
                             st.session_state.pop("pdf_pendientes",None)
                             st.success("Pedidos marcados como impresos. Ya aparecerán en el módulo 4.")
                             st.rerun()
@@ -739,7 +769,8 @@ with tab_bandeja:
                 datos = datos_etiqueta_guardados(numero)
                 with st.form("reimprimir_"+numero):
                     fecha = st.date_input("Fecha de beneficio",value=date.fromisoformat(datos["fecha_beneficio"])
-                                          if datos.get("fecha_beneficio") else date.today(),format="DD/MM/YYYY")
+                                          if datos.get("fecha_beneficio") else date.today(),format="DD/MM/YYYY",
+                                          disabled=bool(datos.get("fecha_empaque")))
                     lote = st.text_input("Lote (obligatorio)",value=datos.get("lote") or "")
                     nit = st.text_input("Fabricado para (NIT opcional)",value=datos.get("nit") or "")
                     pesos = []
@@ -750,14 +781,17 @@ with tab_bandeja:
                                                      key="peso_impreso_"+numero+"_"+str(i)))
                     generar = st.form_submit_button("Preparar PDF de reimpresión")
                 if generar:
+                    st.session_state.pop("pdf_reimpreso",None)
                     if not lote.strip() or not seleccionadas:
                         st.error("Indica el lote y selecciona al menos una etiqueta.")
                     else:
                         try:
+                            fecha_empaque = asegurar_fecha_empaque(numero,cabecera,datos)
                             guardar_datos_etiqueta(numero,fecha,lote,nit)
                             editadas = [dict(p,Bolsas=[peso]) for p,peso in zip(seleccionadas,pesos)]
                             st.session_state["pdf_reimpreso"] = pdf_etiquetas_diseno(
                                 editadas,numero_pedido=numero,lote=lote,fecha_beneficio=fecha,
+                                fecha_empaque=fecha_empaque,
                                 nit=nit,conservacion="Mantener refrigerado entre 0 °C y 4 °C",
                                 instrucciones="Producto que requiere cocción para su consumo",direccion=DIRECCION)
                             st.session_state["pdf_reimpreso_numero"] = numero
